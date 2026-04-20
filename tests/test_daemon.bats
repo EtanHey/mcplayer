@@ -476,7 +476,8 @@ EOF
     {"send": {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "echo", "arguments": {"client": "A", "delayMs": 150}}}}
   ],
   "receive_count": 2,
-  "timeout_ms": 4000
+  "timeout_ms": 4000,
+  "idle_timeout_ms": 1500
 }'
   write_scenario "$MCPLAYER_DAEMON_TEST_TMP/client-b.json" '{
   "messages": [
@@ -486,7 +487,8 @@ EOF
     {"send": {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "echo", "arguments": {"client": "B", "delayMs": 150}}}}
   ],
   "receive_count": 2,
-  "timeout_ms": 4000
+  "timeout_ms": 4000,
+  "idle_timeout_ms": 1500
 }'
 
   python3 "$MCPLAYER_MCP_CLIENT" "$MCPLAYER_DAEMON_SOCKET" pooled "$MCPLAYER_DAEMON_TEST_TMP/client-a.json" "$MCPLAYER_CLIENT_A_OUT" &
