@@ -18,8 +18,16 @@ jobs:
       - name: Install bats-core
         run: brew install bats-core
 
-      - name: Syntax check
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Syntax check (zsh CLI)
         run: zsh -n bin/mcplayer
+
+      - name: Syntax check (Bun adapter)
+        run: bun --version
 
       - name: Run bats suite
         run: bats tests
