@@ -58,7 +58,7 @@ snapshot_records() {
   ps -axo pid=,ppid=,pgid=,pcpu=,etime=,comm=,args= | awk '
 function classify(comm, args, text) {
   text = tolower(comm " " args)
-  if (text ~ /brainbar/) {
+  if (tolower(comm) ~ /brainbar$/ || args ~ /(^|[[:space:]])[^[:space:]]*BrainBar([[:space:]]|$)/) {
     return "brainbar"
   }
   if (comm ~ /^(claude|codex|cursor|gemini)$/ || text ~ /(^|[[:space:]])(claude|codex|cursor|gemini)([[:space:]]|$)/) {
@@ -186,6 +186,24 @@ load_average() {
   sysctl -n vm.loadavg 2>/dev/null || echo "unavailable"
 }
 
+is_orphan_pid() {
+  local target="$1"
+  local pid
+  for pid in "${ORPHAN_IDS[@]}"; do
+    if [[ "$pid" == "$target" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+print_process_line() {
+  local pid="$1"
+  local indent="${2:-}"
+
+  echo "${indent}- ${PROC_LABEL[$pid]} [${pid}] ${PROC_ARGS[$pid]}"
+}
+
 status_alarm() {
   local -a reasons=()
 
@@ -222,12 +240,37 @@ cmd_status() {
   echo "ALARM: $(status_alarm)"
 }
 
+cmd_list() {
+  load_snapshot
+
+  local agent_pid pid
+
+  echo "mcplayer list"
+  echo "agents:"
+  for agent_pid in "${AGENT_IDS[@]}"; do
+    echo "- ${PROC_LABEL[$agent_pid]} [${agent_pid}] pgid=${PROC_PGID[$agent_pid]} ${PROC_ARGS[$agent_pid]}"
+    for pid in "${PROC_IDS[@]}"; do
+      if [[ "$pid" != "$agent_pid" && "${PROC_KIND[$pid]}" == "mcp" && "${PROC_PGID[$pid]}" == "${PROC_PGID[$agent_pid]}" ]]; then
+        print_process_line "$pid" "  "
+      fi
+    done
+  done
+
+  echo "orphans:"
+  for pid in "${ORPHAN_IDS[@]}"; do
+    echo "- ${PROC_LABEL[$pid]} [${pid}] uptime=${PROC_ETIME[$pid]} ${PROC_ARGS[$pid]}"
+  done
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
     cmd_status
     ;;
-  list|orphans|clean|nuke|up|down)
+  list)
+    cmd_list
+    ;;
+  orphans|clean|nuke|up|down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
