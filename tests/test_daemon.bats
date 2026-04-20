@@ -12,6 +12,7 @@ setup() {
   export MCPLAYER_UPSTREAM_LOG="$MCPLAYER_DAEMON_TEST_TMP/upstream.log"
   export MCPLAYER_STUB_UPSTREAM="$MCPLAYER_DAEMON_TEST_TMP/stub-upstream.py"
   export MCPLAYER_MCP_CLIENT="$MCPLAYER_DAEMON_TEST_TMP/mcp-client.py"
+  export MCPLAYER_IDLE_CLIENT="$MCPLAYER_DAEMON_TEST_TMP/idle-client.py"
   export MCPLAYER_BRAINBAR_STUB="$MCPLAYER_DAEMON_TEST_TMP/brainbar-stub.py"
   export MCPLAYER_BRAINBAR_SOCKET="$MCPLAYER_DAEMON_TEST_TMP/brainbar.sock"
   export MCPLAYER_BRAINBAR_LOG="$MCPLAYER_DAEMON_TEST_TMP/brainbar.log"
@@ -22,6 +23,7 @@ setup() {
 
   write_stub_upstream
   write_mcp_client
+  write_idle_client
   write_brainbar_stub
   start_brainbar_stub
 }
@@ -224,6 +226,40 @@ EOF
   chmod +x "$MCPLAYER_MCP_CLIENT"
 }
 
+write_idle_client() {
+  cat > "$MCPLAYER_IDLE_CLIENT" <<'EOF'
+#!/usr/bin/env python3
+import json
+import socket
+import sys
+import time
+
+socket_path, target, client_name, hold_open_ms = sys.argv[1:5]
+
+def write_message(sock, payload):
+    body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    sock.sendall(f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8") + body)
+
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect(socket_path)
+sock.sendall(f"TARGET:{target}\n".encode("utf-8"))
+write_message(sock, {
+    "jsonrpc": "2.0",
+    "id": 90,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": client_name, "version": "1.0.0"},
+    },
+})
+write_message(sock, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+time.sleep(float(hold_open_ms) / 1000.0)
+sock.close()
+EOF
+  chmod +x "$MCPLAYER_IDLE_CLIENT"
+}
+
 write_brainbar_stub() {
   cat > "$MCPLAYER_BRAINBAR_STUB" <<'EOF'
 #!/usr/bin/env python3
@@ -343,7 +379,7 @@ EOF
 }
 
 start_daemon() {
-  local extra_env="${1:-}"
+  local -a extra_env=("$@")
   write_config
 
   local -a env_args=(
@@ -352,8 +388,8 @@ start_daemon() {
     "MCPLAYER_BRAINBAR_SOCKET_PATH=$MCPLAYER_BRAINBAR_SOCKET"
     "MCPLAYER_DISABLE_BRAINBAR_LOGS=0"
   )
-  if [[ -n "$extra_env" ]]; then
-    env_args+=("$extra_env")
+  if (( ${#extra_env[@]} > 0 )); then
+    env_args+=("${extra_env[@]}")
   fi
 
   env "${env_args[@]}" bun run src/index.ts \
@@ -394,6 +430,34 @@ with open(path, "r", encoding="utf-8") as handle:
     messages = [json.loads(line) for line in handle if line.strip()]
 
 value = eval(expr, {"messages": messages})
+if isinstance(value, (dict, list)):
+    print(json.dumps(value, ensure_ascii=True))
+else:
+    print(value)
+EOF
+}
+
+daemon_status_value() {
+  local expr="$1"
+  python3 - "$MCPLAYER_DAEMON_SOCKET" "$expr" <<'EOF'
+import json
+import socket
+import sys
+
+socket_path, expr = sys.argv[1:3]
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect(socket_path)
+sock.sendall(b"CONTROL:status\n")
+payload = b""
+while True:
+    chunk = sock.recv(65536)
+    if not chunk:
+        break
+    payload += chunk
+sock.close()
+
+status = json.loads(payload.decode("utf-8").strip())
+value = eval(expr, {"status": status})
 if isinstance(value, (dict, list)):
     print(json.dumps(value, ensure_ascii=True))
 else:
@@ -611,4 +675,68 @@ EOF
 
   [ "$(json_value "$MCPLAYER_CLIENT_A_OUT" 'messages[1]["result"]["structuredContent"]["args"]["client"]')" = "backpressure" ]
   grep -q '"event":"socket-backpressure"' "$MCPLAYER_DAEMON_STDOUT"
+}
+
+@test "failed client write does not drop a later multiplexed result for a healthy client" {
+  start_daemon "MCPLAYER_TEST_FORCE_FIRST_CLIENT_WRITE_FAIL_ONCE=1"
+
+  python3 "$MCPLAYER_IDLE_CLIENT" "$MCPLAYER_DAEMON_SOCKET" pooled listener 1200 &
+  listener_pid=$!
+  sleep 0.2
+
+  write_scenario "$MCPLAYER_DAEMON_TEST_TMP/emitter-after-write-failure.json" '{
+  "messages": [
+    {"send": {"jsonrpc": "2.0", "id": 30, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "emitter", "version": "1.0.0"}}}},
+    {"send": {"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {"sleep_ms": 150},
+    {"send": {"jsonrpc": "2.0", "id": 31, "method": "tools/call", "params": {"name": "notify-all", "arguments": {"note": "chain-survives"}}}}
+  ],
+  "receive_count": 3,
+  "timeout_ms": 4000,
+  "idle_timeout_ms": 1500
+}'
+
+  python3 "$MCPLAYER_MCP_CLIENT" "$MCPLAYER_DAEMON_SOCKET" pooled "$MCPLAYER_DAEMON_TEST_TMP/emitter-after-write-failure.json" "$MCPLAYER_CLIENT_B_OUT"
+  wait "$listener_pid" || true
+
+  [ "$(json_value "$MCPLAYER_CLIENT_B_OUT" 'len(messages)')" = "3" ]
+  [ "$(json_value "$MCPLAYER_CLIENT_B_OUT" 'messages[1]["method"]')" = "notifications/message" ]
+  [ "$(json_value "$MCPLAYER_CLIENT_B_OUT" 'messages[2]["id"]')" = "31" ]
+  [ "$(json_value "$MCPLAYER_CLIENT_B_OUT" 'messages[2]["result"]["structuredContent"]["args"]["note"]')" = "chain-survives" ]
+  grep -q '"event":"client-write-failed"' "$MCPLAYER_DAEMON_STDOUT"
+}
+
+@test "daemon bounds sustained socket backpressure and recovers for later clients" {
+  start_daemon \
+    "MCPLAYER_TEST_FORCE_FIRST_CLIENT_WRITE_ZERO_ALWAYS=1" \
+    "MCPLAYER_TEST_SOCKET_WRITE_MAX_RETRIES=5"
+
+  write_scenario "$MCPLAYER_DAEMON_TEST_TMP/stuck-client.json" '{
+  "messages": [
+    {"send": {"jsonrpc": "2.0", "id": 40, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "stuck", "version": "1.0.0"}}}}
+  ],
+  "receive_count": 1,
+  "timeout_ms": 700,
+  "idle_timeout_ms": 150
+}'
+
+  python3 "$MCPLAYER_MCP_CLIENT" "$MCPLAYER_DAEMON_SOCKET" pooled "$MCPLAYER_DAEMON_TEST_TMP/stuck-client.json" "$MCPLAYER_CLIENT_A_OUT"
+  sleep 0.2
+
+  grep -q '"event":"socket-backpressure-timeout"' "$MCPLAYER_DAEMON_STDOUT"
+  [ "$(daemon_status_value 'status["clientCount"]')" = "1" ]
+
+  write_scenario "$MCPLAYER_DAEMON_TEST_TMP/healthy-after-timeout.json" '{
+  "messages": [
+    {"send": {"jsonrpc": "2.0", "id": 41, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "healthy", "version": "1.0.0"}}}},
+    {"send": {"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {"send": {"jsonrpc": "2.0", "id": 42, "method": "tools/call", "params": {"name": "echo", "arguments": {"client": "healthy"}}}}
+  ],
+  "receive_count": 2,
+  "timeout_ms": 4000
+}'
+
+  python3 "$MCPLAYER_MCP_CLIENT" "$MCPLAYER_DAEMON_SOCKET" pooled "$MCPLAYER_DAEMON_TEST_TMP/healthy-after-timeout.json" "$MCPLAYER_CLIENT_B_OUT"
+
+  [ "$(json_value "$MCPLAYER_CLIENT_B_OUT" 'messages[1]["result"]["structuredContent"]["args"]["client"]')" = "healthy" ]
 }

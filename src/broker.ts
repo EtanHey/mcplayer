@@ -10,9 +10,18 @@ import { McpFrameReader, encodeMcpMessage, sleep } from "./mcp-framing";
 const ID_SEPARATOR = ":::mcplayer:::";
 const STATUS_HEADER = "CONTROL:status";
 const WRITE_RETRY_MS = 10;
+const DEFAULT_SOCKET_WRITE_MAX_RETRIES = 100;
 
 type BunSocket = any;
 type JsonRpcId = string | number | null;
+type ClientWriteTestMode = "none" | "fail-once" | "zero-always";
+
+interface SocketWriteOptions {
+  forceFailOnce?: boolean;
+  forceZeroAlways?: boolean;
+  forceZeroOnce?: boolean;
+  maxRetries: number;
+}
 
 interface ClientConnection {
   id: string;
@@ -23,6 +32,8 @@ interface ClientConnection {
   frameReader: McpFrameReader;
   upstreamKey?: string;
   closed: boolean;
+  testWriteMode: ClientWriteTestMode;
+  testWriteModeConsumed: boolean;
   writes: Promise<void>;
   operations: Promise<void>;
 }
@@ -60,6 +71,11 @@ export class McplayerBroker {
   #stopping = false;
   #forcedBackpressurePending =
     Bun.env.MCPLAYER_TEST_FORCE_SOCKET_WRITE_ZERO_ONCE === "1";
+  #forcedFirstClientWriteFailPending =
+    Bun.env.MCPLAYER_TEST_FORCE_FIRST_CLIENT_WRITE_FAIL_ONCE === "1";
+  #forcedFirstClientWriteZeroAlwaysPending =
+    Bun.env.MCPLAYER_TEST_FORCE_FIRST_CLIENT_WRITE_ZERO_ALWAYS === "1";
+  #socketWriteMaxRetries = resolveSocketWriteMaxRetries();
   #processGroupId = this.#resolveProcessGroupId();
 
   constructor(config: McplayerConfig, logger: McplayerLogger) {
@@ -177,6 +193,15 @@ export class McplayerBroker {
   }
 
   #handleClientOpen(socket: BunSocket): void {
+    let testWriteMode: ClientWriteTestMode = "none";
+    if (this.#forcedFirstClientWriteFailPending) {
+      this.#forcedFirstClientWriteFailPending = false;
+      testWriteMode = "fail-once";
+    } else if (this.#forcedFirstClientWriteZeroAlwaysPending) {
+      this.#forcedFirstClientWriteZeroAlwaysPending = false;
+      testWriteMode = "zero-always";
+    }
+
     const client: ClientConnection = {
       id: randomUUID(),
       socket,
@@ -184,6 +209,8 @@ export class McplayerBroker {
       headerParsed: false,
       frameReader: new McpFrameReader(),
       closed: false,
+      testWriteMode,
+      testWriteModeConsumed: false,
       writes: Promise.resolve(),
       operations: Promise.resolve(),
     };
@@ -198,28 +225,7 @@ export class McplayerBroker {
       return;
     }
 
-    client.closed = true;
-    this.#clients.delete(socket);
-    this.#clientsById.delete(client.id);
-
-    if (client.upstreamKey) {
-      const upstream =
-        this.#pooledUpstreams.get(client.upstreamKey) ?? this.#sidecars.get(client.upstreamKey);
-      if (upstream) {
-        upstream.clients.delete(client.id);
-        for (const [rewrittenId, pending] of upstream.pending.entries()) {
-          if (pending.clientId === client.id) {
-            upstream.pending.delete(rewrittenId);
-          }
-        }
-        if (upstream.mode === "sidecar") {
-          this.#sidecars.delete(upstream.key);
-          upstream.child.kill("SIGKILL");
-        }
-      }
-    }
-
-    this.#logger.info("client-close", { clientId: client.id, toolName: client.toolName });
+    this.#detachClient(client, "socket-close");
   }
 
   #handleClientData(socket: BunSocket, data: Uint8Array): void {
@@ -518,9 +524,23 @@ export class McplayerBroker {
   }
 
   async #sendClientBytes(client: ClientConnection, payload: Uint8Array): Promise<void> {
-    client.writes = client.writes.then(() =>
-      safeSocketWrite(client.socket, payload, this.#logger, this.#consumeForcedBackpressure()),
-    );
+    if (client.closed) {
+      return;
+    }
+
+    client.writes = client.writes
+      .catch(() => undefined)
+      .then(async () => {
+        if (client.closed) {
+          return;
+        }
+
+        try {
+          await safeSocketWrite(client.socket, payload, this.#logger, this.#socketWriteOptionsFor(client));
+        } catch (error) {
+          this.#handleClientWriteFailure(client, error);
+        }
+      });
     return client.writes;
   }
 
@@ -530,6 +550,75 @@ export class McplayerBroker {
     }
     this.#forcedBackpressurePending = false;
     return true;
+  }
+
+  #socketWriteOptionsFor(client: ClientConnection): SocketWriteOptions {
+    const options: SocketWriteOptions = {
+      forceZeroOnce: this.#consumeForcedBackpressure(),
+      maxRetries: this.#socketWriteMaxRetries,
+    };
+
+    if (client.testWriteMode === "fail-once" && !client.testWriteModeConsumed) {
+      client.testWriteModeConsumed = true;
+      options.forceFailOnce = true;
+    } else if (client.testWriteMode === "zero-always") {
+      options.forceZeroAlways = true;
+    }
+
+    return options;
+  }
+
+  #handleClientWriteFailure(client: ClientConnection, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.#logger.warn("client-write-failed", {
+      clientId: client.id,
+      toolName: client.toolName,
+      error: message,
+    });
+    this.#detachClient(client, "write-failed", { error: message });
+    try {
+      client.socket.end();
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  #detachClient(
+    client: ClientConnection,
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    if (client.closed) {
+      return;
+    }
+
+    client.closed = true;
+    this.#clients.delete(client.socket);
+    this.#clientsById.delete(client.id);
+
+    if (client.upstreamKey) {
+      const upstream =
+        this.#pooledUpstreams.get(client.upstreamKey) ?? this.#sidecars.get(client.upstreamKey);
+      if (upstream) {
+        upstream.clients.delete(client.id);
+        for (const [rewrittenId, pending] of upstream.pending.entries()) {
+          if (pending.clientId === client.id) {
+            upstream.pending.delete(rewrittenId);
+          }
+        }
+        if (upstream.mode === "sidecar") {
+          this.#sidecars.delete(upstream.key);
+          upstream.child.kill("SIGKILL");
+        }
+      }
+    }
+
+    this.#logger.info("client-close", {
+      clientId: client.id,
+      toolName: client.toolName,
+      reason,
+      ...extra,
+    });
   }
 
   statusSnapshot(): Record<string, unknown> {
@@ -576,15 +665,21 @@ async function safeSocketWrite(
   socket: BunSocket,
   payload: Uint8Array,
   logger: McplayerLogger,
-  forceZeroOnce = false,
+  options: SocketWriteOptions,
 ): Promise<void> {
   let offset = 0;
-  let forced = forceZeroOnce;
+  let forceFailOnce = options.forceFailOnce ?? false;
+  let forceZeroOnce = options.forceZeroOnce ?? false;
+  const forceZeroAlways = options.forceZeroAlways ?? false;
+  let zeroWriteRetries = 0;
 
   while (offset < payload.length) {
     let written = 0;
-    if (forced) {
-      forced = false;
+    if (forceFailOnce) {
+      forceFailOnce = false;
+      written = -1;
+    } else if (forceZeroOnce || forceZeroAlways) {
+      forceZeroOnce = false;
       written = 0;
     } else {
       written = socket.write(payload.subarray(offset));
@@ -595,15 +690,34 @@ async function safeSocketWrite(
     }
 
     if (written === 0) {
+      zeroWriteRetries += 1;
       logger.info("socket-backpressure", {
         bytesRemaining: payload.length - offset,
+        retries: zeroWriteRetries,
       });
+      if (zeroWriteRetries >= options.maxRetries) {
+        logger.warn("socket-backpressure-timeout", {
+          bytesRemaining: payload.length - offset,
+          retries: zeroWriteRetries,
+        });
+        throw new Error(`socket write exhausted retries after ${zeroWriteRetries} attempts`);
+      }
       await sleep(WRITE_RETRY_MS);
       continue;
     }
 
+    zeroWriteRetries = 0;
     offset += written;
   }
+}
+
+function resolveSocketWriteMaxRetries(): number {
+  const raw = Bun.env.MCPLAYER_TEST_SOCKET_WRITE_MAX_RETRIES;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_SOCKET_WRITE_MAX_RETRIES;
 }
 
 async function writeToChild(
