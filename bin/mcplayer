@@ -368,18 +368,17 @@ cmd_nuke() {
 
   local pid
   local brainbar_pid=""
+  local dry_run=0
   local -a target_ids=()
 
   echo "mcplayer nuke"
-  if (( FLAG_YES == 0 )); then
-    echo "requires --yes to kill agents and MCP runtimes"
-    return 2
-  fi
-
   target_ids=("${AGENT_IDS[@]}" "${MCP_IDS[@]}")
   brainbar_pid="$(current_brainbar_pid 2>/dev/null || true)"
+  if (( FLAG_DRY_RUN == 1 || FLAG_YES == 0 )); then
+    dry_run=1
+  fi
 
-  if (( FLAG_DRY_RUN == 1 )); then
+  if (( dry_run == 1 )); then
     echo "dry-run: would kill agent and MCP runtimes"
     for pid in "${target_ids[@]}"; do
       echo "- ${PROC_LABEL[$pid]} [${pid}]"
