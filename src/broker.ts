@@ -41,6 +41,7 @@ interface UpstreamConnection {
   frameReader: McpFrameReader;
   clients: Set<string>;
   pending: Map<string, PendingRequest>;
+  operations: Promise<void>;
 }
 
 function cloneMessage<T>(message: T): T {
@@ -227,10 +228,12 @@ export class McplayerBroker {
       return;
     }
 
+    const chunk = Buffer.from(data);
+
     client.operations = client.operations
       .then(async () => {
         if (!client.headerParsed) {
-          client.headerBuffer = Buffer.concat([client.headerBuffer, Buffer.from(data)]);
+          client.headerBuffer = Buffer.concat([client.headerBuffer, chunk]);
           const newlineIndex = client.headerBuffer.indexOf("\n");
           if (newlineIndex === -1) {
             return;
@@ -275,7 +278,7 @@ export class McplayerBroker {
           return;
         }
 
-        await this.#handleClientFrames(client, data);
+        await this.#handleClientFrames(client, chunk);
       })
       .catch((error) => {
         this.#logger.error("client-data-failed", {
@@ -379,10 +382,21 @@ export class McplayerBroker {
       frameReader: new McpFrameReader(),
       clients: new Set<string>(),
       pending: new Map<string, PendingRequest>(),
+      operations: Promise.resolve(),
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      void this.#handleUpstreamData(upstream, chunk);
+      const copiedChunk = Buffer.from(chunk);
+      upstream.operations = upstream.operations
+        .then(() => this.#handleUpstreamData(upstream, copiedChunk))
+        .catch((error) => {
+          this.#logger.error("upstream-data-failed", {
+            toolName,
+            mode,
+            pid: child.pid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
     });
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
