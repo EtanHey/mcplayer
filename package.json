@@ -1,0 +1,26 @@
+{
+  "name": "mcplayer",
+  "version": "0.1.0",
+  "description": "MCP process lifecycle layer for local macOS multi-agent AI coding environments",
+  "type": "module",
+  "bin": {
+    "mcplayer": "./bin/mcplayer"
+  },
+  "scripts": {
+    "test": "bats tests/",
+    "test:ci": "bats tests/ --formatter tap"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "multiplexer",
+    "process-management",
+    "macos"
+  ],
+  "author": "Etan Heyman <etanface@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:EtanHey/mcplayer.git"
+  }
+}

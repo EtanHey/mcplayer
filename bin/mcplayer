@@ -1,0 +1,61 @@
+#!/usr/bin/env zsh
+# mcplayer — MCP process lifecycle CLI
+# Phase 1 stub. cmuxlayerCodex will implement subcommands per
+# ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md
+
+set -euo pipefail
+
+VERSION="0.1.0"
+
+usage() {
+  cat <<EOF
+mcplayer v${VERSION} — MCP process lifecycle CLI
+
+USAGE:
+  mcplayer <subcommand> [options]
+
+SUBCOMMANDS:
+  status      One-screen dashboard: counts, load, syspolicyd %, ALARM if elevated
+  list        Tree: each Claude/Codex agent → its MCP children
+  orphans     Orphans only (ppid=1, agent-less)
+  clean       Kill orphans (SAFE — only ppid=1). --dry-run default.
+  nuke        🚨 PANIC BUTTON: kill ALL MCP+agent procs. --yes required.
+  up          Ensure brainbar daemon running + healthy
+  down        Graceful shutdown: agents → MCPs → brainbar
+
+OPTIONS:
+  --yes                 Confirm destructive action
+  --dry-run             Print what would be done (default for clean/nuke)
+  --include-brainbar    Allow nuke to kill BrainBar (default: protected)
+  --version             Show version
+  --help                Show this help
+
+EXAMPLES:
+  mcplayer status
+  mcplayer clean              # dry-run, shows orphans
+  mcplayer clean --yes        # actually kills
+  mcplayer nuke --yes         # kill everything except BrainBar
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  status|list|orphans|clean|nuke|up|down)
+    echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
+    echo "   cmuxlayerCodex is working on this tonight. See:"
+    echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
+    exit 1
+    ;;
+  --version|-v)
+    echo "mcplayer $VERSION"
+    ;;
+  --help|-h|"")
+    usage
+    ;;
+  *)
+    echo "Unknown subcommand: $cmd"
+    echo ""
+    usage
+    exit 2
+    ;;
+esac

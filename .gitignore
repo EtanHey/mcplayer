@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+*.log
+docs.local/
+.env
+.env.local
+claude.scratchpad.md
+bin/.mcplayer.log
