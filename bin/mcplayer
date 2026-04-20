@@ -7,6 +7,22 @@ set -euo pipefail
 
 VERSION="0.1.0"
 
+typeset -ga PROC_IDS=()
+typeset -ga AGENT_IDS=()
+typeset -ga MCP_IDS=()
+typeset -ga ORPHAN_IDS=()
+typeset -gA PROC_PPID=()
+typeset -gA PROC_PGID=()
+typeset -gA PROC_CPU=()
+typeset -gA PROC_ETIME=()
+typeset -gA PROC_COMM=()
+typeset -gA PROC_ARGS=()
+typeset -gA PROC_KIND=()
+typeset -gA PROC_LABEL=()
+typeset -gA AGENT_BY_PGID=()
+typeset -g BRAINBAR_PID=""
+typeset -g SYSPOLICYD_CPU="0.0"
+
 usage() {
   cat <<EOF
 mcplayer v${VERSION} — MCP process lifecycle CLI
@@ -38,9 +54,180 @@ EXAMPLES:
 EOF
 }
 
+snapshot_records() {
+  ps -axo pid=,ppid=,pgid=,pcpu=,etime=,comm=,args= | awk '
+function classify(comm, args, text) {
+  text = tolower(comm " " args)
+  if (text ~ /brainbar/) {
+    return "brainbar"
+  }
+  if (comm ~ /^(claude|codex|cursor|gemini)$/ || text ~ /(^|[[:space:]])(claude|codex|cursor|gemini)([[:space:]]|$)/) {
+    return "agent"
+  }
+  if (text ~ /syspolicyd/) {
+    return "system"
+  }
+  if (comm ~ /^(bun|node|python|python3|uv|npm|socat)$/ && text ~ /(mcp|cmuxlayer|voicelayer|brainbar\.sock|google-drive|figma|browser-tools|context7|linear|notebooklm|whatsapp-mcp)/) {
+    return "mcp"
+  }
+  return "other"
+}
+function label(comm, args, text) {
+  text = tolower(args)
+  if (tolower(comm) ~ /brainbar/ || text ~ /brainbar/) {
+    return "BrainBar"
+  }
+  if (text ~ /cmuxlayer/) {
+    return "cmuxlayer"
+  }
+  if (text ~ /google-drive-mcp/) {
+    return "google-drive-mcp"
+  }
+  if (text ~ /figma/) {
+    return "figma-mcp"
+  }
+  if (text ~ /browser-tools/) {
+    return "browser-tools-mcp"
+  }
+  if (text ~ /context7/) {
+    return "context7-mcp"
+  }
+  if (text ~ /linear/) {
+    return "linear-mcp"
+  }
+  if (text ~ /notebooklm/) {
+    return "notebooklm-mcp"
+  }
+  if (text ~ /whatsapp-mcp/) {
+    return "whatsapp-mcp"
+  }
+  if (tolower(comm) == "socat" && text ~ /brainbar\.sock/) {
+    return "brainbar-socket"
+  }
+  return comm
+}
+{
+  pid = $1
+  ppid = $2
+  pgid = $3
+  cpu = $4
+  etime = $5
+  comm = $6
+  args = ""
+  if (NF >= 7) {
+    args = $7
+    for (i = 8; i <= NF; i++) {
+      args = args " " $i
+    }
+  }
+  gsub(/\|/, "/", args)
+  kind = classify(comm, args)
+  printf "%s|%s|%s|%s|%s|%s|%s|%s|%s\n", pid, ppid, pgid, cpu, etime, comm, args, kind, label(comm, args)
+}'
+}
+
+load_snapshot() {
+  PROC_IDS=()
+  AGENT_IDS=()
+  MCP_IDS=()
+  ORPHAN_IDS=()
+  PROC_PPID=()
+  PROC_PGID=()
+  PROC_CPU=()
+  PROC_ETIME=()
+  PROC_COMM=()
+  PROC_ARGS=()
+  PROC_KIND=()
+  PROC_LABEL=()
+  AGENT_BY_PGID=()
+  BRAINBAR_PID=""
+  SYSPOLICYD_CPU="0.0"
+
+  local pid ppid pgid cpu etime comm args kind label
+  while IFS='|' read -r pid ppid pgid cpu etime comm args kind label; do
+    [[ -n "$pid" ]] || continue
+    PROC_IDS+=("$pid")
+    PROC_PPID[$pid]="$ppid"
+    PROC_PGID[$pid]="$pgid"
+    PROC_CPU[$pid]="$cpu"
+    PROC_ETIME[$pid]="$etime"
+    PROC_COMM[$pid]="$comm"
+    PROC_ARGS[$pid]="$args"
+    PROC_KIND[$pid]="$kind"
+    PROC_LABEL[$pid]="$label"
+
+    case "$kind" in
+      agent)
+        AGENT_IDS+=("$pid")
+        AGENT_BY_PGID[$pgid]="$pid"
+        ;;
+      mcp)
+        MCP_IDS+=("$pid")
+        ;;
+      brainbar)
+        BRAINBAR_PID="$pid"
+        ;;
+      system)
+        if [[ "$label" == "syspolicyd" || "$comm" == "syspolicyd" || "$args" == *"syspolicyd"* ]]; then
+          SYSPOLICYD_CPU="$cpu"
+        fi
+        ;;
+    esac
+  done < <(snapshot_records)
+
+  for pid in "${MCP_IDS[@]}"; do
+    if [[ "${PROC_PPID[$pid]}" == "1" && -z "${AGENT_BY_PGID[${PROC_PGID[$pid]}]-}" ]]; then
+      ORPHAN_IDS+=("$pid")
+    fi
+  done
+}
+
+load_average() {
+  sysctl -n vm.loadavg 2>/dev/null || echo "unavailable"
+}
+
+status_alarm() {
+  local -a reasons=()
+
+  if (( ${#MCP_IDS[@]} > 50 )); then
+    reasons+=("mcp-count=${#MCP_IDS[@]}")
+  fi
+  if awk -v cpu="$SYSPOLICYD_CPU" 'BEGIN { exit !((cpu + 0) > 20) }'; then
+    reasons+=("syspolicyd=${SYSPOLICYD_CPU}%")
+  fi
+
+  if (( ${#reasons[@]} == 0 )); then
+    echo "ok"
+  else
+    echo "${(j:, :)reasons}"
+  fi
+}
+
+cmd_status() {
+  load_snapshot
+
+  local brainbar_state="stopped"
+  local brainbar_pids
+  if brainbar_pids="$(pgrep -f BrainBar 2>/dev/null)"; then
+    brainbar_state="running (${brainbar_pids//$'\n'/, })"
+  elif [[ -n "$BRAINBAR_PID" ]]; then
+    brainbar_state="running ($BRAINBAR_PID)"
+  fi
+
+  echo "mcplayer status"
+  echo "MCP procs: ${#MCP_IDS[@]} total (agents: ${#AGENT_IDS[@]}, orphans: ${#ORPHAN_IDS[@]})"
+  echo "syspolicyd: ${SYSPOLICYD_CPU}%"
+  echo "load: $(load_average)"
+  echo "BrainBar: ${brainbar_state}"
+  echo "ALARM: $(status_alarm)"
+}
+
 cmd="${1:-}"
 case "$cmd" in
-  status|list|orphans|clean|nuke|up|down)
+  status)
+    cmd_status
+    ;;
+  list|orphans|clean|nuke|up|down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
