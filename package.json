@@ -3,12 +3,18 @@
   "version": "0.1.0",
   "description": "MCP process lifecycle layer for local macOS multi-agent AI coding environments",
   "type": "module",
+  "engines": {
+    "bun": ">=1.3.2"
+  },
   "bin": {
     "mcplayer": "./bin/mcplayer"
   },
   "scripts": {
     "test": "bats tests/",
     "test:ci": "bats tests/ --formatter tap"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.2"
   },
   "keywords": [
     "mcp",

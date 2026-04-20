@@ -41,6 +41,7 @@ SUBCOMMANDS:
   nuke        🚨 PANIC BUTTON: kill ALL MCP+agent procs. --yes required.
   up          Ensure brainbar daemon running + healthy
   down        Graceful shutdown: agents → MCPs → brainbar
+  daemon      LaunchAgent control: start|stop|status for the Phase 2 daemon
 
 OPTIONS:
   --yes                 Confirm destructive action
@@ -54,6 +55,7 @@ EXAMPLES:
   mcplayer clean              # dry-run, shows orphans
   mcplayer clean --yes        # actually kills
   mcplayer nuke --yes         # kill everything except BrainBar
+  mcplayer daemon status
 EOF
 }
 
@@ -496,6 +498,78 @@ cmd_down() {
   fi
 }
 
+daemon_label() {
+  echo "${MCPLAYER_DAEMON_LABEL:-com.mcplayer.multiplexer}"
+}
+
+daemon_socket_path() {
+  echo "${MCPLAYER_SOCKET_PATH:-/tmp/mcplayer.sock}"
+}
+
+daemon_launchd_target() {
+  local uid
+  uid="$(id -u)"
+  echo "gui/${uid}/$(daemon_label)"
+}
+
+cmd_daemon_start() {
+  parse_flags "$@"
+
+  local target
+  target="$(daemon_launchd_target)"
+
+  echo "mcplayer daemon start"
+  if ! launchctl kickstart -k "$target" >/dev/null 2>&1; then
+    echo "failed: launchctl kickstart -k $target" >&2
+    return 1
+  fi
+
+  echo "launchctl kickstart -k $target"
+}
+
+cmd_daemon_stop() {
+  parse_flags "$@"
+
+  local target plist_path
+  target="$(daemon_launchd_target)"
+  plist_path="$HOME/Library/LaunchAgents/$(daemon_label).plist"
+
+  echo "mcplayer daemon stop"
+  if launchctl bootout "$target" >/dev/null 2>&1; then
+    echo "launchctl bootout $target"
+    return 0
+  fi
+
+  if launchctl bootout "gui/$(id -u)" "$plist_path" >/dev/null 2>&1; then
+    echo "launchctl bootout gui/$(id -u) $plist_path"
+    return 0
+  fi
+
+  echo "failed: launchctl bootout $target" >&2
+  echo "failed: launchctl bootout gui/$(id -u) $plist_path" >&2
+  return 1
+}
+
+cmd_daemon_status() {
+  parse_flags "$@"
+
+  local socket_path status_payload
+  socket_path="$(daemon_socket_path)"
+
+  echo "mcplayer daemon status"
+  if ! status_payload="$(printf 'CONTROL:status\n' | nc -U "$socket_path" 2>/dev/null)"; then
+    echo "daemon unavailable at $socket_path" >&2
+    return 1
+  fi
+
+  if [[ -z "$status_payload" ]]; then
+    echo "empty status payload from $socket_path" >&2
+    return 1
+  fi
+
+  echo "$status_payload"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -518,6 +592,24 @@ case "$cmd" in
     ;;
   down)
     cmd_down "${@:2}"
+    ;;
+  daemon)
+    daemon_cmd="${2:-}"
+    case "$daemon_cmd" in
+      start)
+        cmd_daemon_start "${@:3}"
+        ;;
+      stop)
+        cmd_daemon_stop "${@:3}"
+        ;;
+      status)
+        cmd_daemon_status "${@:3}"
+        ;;
+      *)
+        echo "Usage: mcplayer daemon <start|stop|status>" >&2
+        exit 2
+        ;;
+    esac
     ;;
   --version|-v)
     echo "mcplayer $VERSION"
