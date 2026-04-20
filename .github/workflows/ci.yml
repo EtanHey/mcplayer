@@ -28,12 +28,15 @@ jobs:
 
       - name: Syntax check (Bun adapter)
         # Real syntax/parse validation: run the adapter with a guaranteed-missing socket.
-        # If the adapter parses and executes correctly, it exits 1 (connect failed).
-        # If there's a syntax error, Bun exits with a different code (2/137), which
-        # fails our `|| [ $? -eq 1 ]` assertion. This is a stronger check than `bun --version`.
+        # If the adapter parses correctly, it exits 1 (connect failed).
+        # A syntax/runtime error produces a different exit code (2/137), failing the assertion.
+        #
+        # GitHub Actions defaults to `bash -e {0}` — a non-zero exit aborts the step before
+        # our check runs. We capture the exit code with `|| rc=$?` which bypasses `set -e`,
+        # then assert inside a non-conditional tail so the step exits clean.
         run: |
-          BRAINBAR_SOCKET_PATH=/tmp/mcplayer-ci-syntax-probe-$$.sock bin/brainbar-adapter </dev/null
-          rc=$?
+          rc=0
+          BRAINBAR_SOCKET_PATH=/tmp/mcplayer-ci-syntax-probe-$$.sock bin/brainbar-adapter </dev/null || rc=$?
           if [ "$rc" -ne 1 ]; then
             echo "Expected exit code 1 (missing socket), got $rc — syntax or runtime error"
             exit 1
