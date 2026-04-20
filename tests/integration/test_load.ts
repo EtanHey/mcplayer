@@ -424,19 +424,20 @@ function runCommand(
 }
 
 function serviceIsLoaded(): boolean {
-  return launchctlPrint({ allowFailure: true }).exitCode === 0;
+  return launchctlPrintResult({ allowFailure: true }).exitCode === 0;
 }
 
-function launchctlPrint(
+function launchctlPrintResult(
   options: { allowFailure?: boolean } = {},
-): string | { stdout: string; stderr: string; exitCode: number | null } {
+): { stdout: string; stderr: string; exitCode: number | null } {
   const result = runCommand(["launchctl", "print", SERVICE_TARGET], {
     allowFailure: options.allowFailure,
   });
-  if (options.allowFailure) {
-    return result;
-  }
-  return result.stdout;
+  return result;
+}
+
+function launchctlPrint(options: { allowFailure?: boolean } = {}): string {
+  return launchctlPrintResult(options).stdout;
 }
 
 function bootoutService(): void {
