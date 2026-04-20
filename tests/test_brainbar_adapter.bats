@@ -6,6 +6,7 @@ setup() {
   setup_mcplayer_test
   BRAINBAR_TEST_SOCKET="$MCPLAYER_TEST_TMP/mcplayer-brainbar.sock"
   BRAINBAR_TEST_SERVER_LOG="$MCPLAYER_TEST_TMP/mcplayer-brainbar-server.log"
+  BRAINBAR_TEST_SERVER_STDERR="$MCPLAYER_TEST_TMP/mcplayer-brainbar-server.stderr.log"
   rm -f "$BRAINBAR_TEST_SOCKET" "$BRAINBAR_TEST_SERVER_LOG"
   BRAINBAR_TEST_SERVER_PID=""
 }
@@ -72,10 +73,33 @@ EOF_SERVER
     BRAINBAR_TEST_SOCKET="$BRAINBAR_TEST_SOCKET" \
     BRAINBAR_TEST_SERVER_MODE="$mode" \
     MCPLAYER_TEST_SERVER_LOG="$BRAINBAR_TEST_SERVER_LOG" \
-    python3 "$script_path" >/tmp/mcplayer-brainbar-server-stderr.log 2>&1
+    python3 "$script_path" >"$BRAINBAR_TEST_SERVER_STDERR" 2>&1
   ) &
   BRAINBAR_TEST_SERVER_PID=$!
-  sleep 0.2
+  wait_for_brainbar_server "$BRAINBAR_TEST_SOCKET"
+}
+
+wait_for_brainbar_server() {
+  local socket_path="$1"
+  local deadline=$((SECONDS + 10))
+
+  while (( SECONDS < deadline )); do
+    if [[ -S "$socket_path" ]]; then
+      return 0
+    fi
+
+    if [[ -n "$BRAINBAR_TEST_SERVER_PID" ]] && ! kill -0 "$BRAINBAR_TEST_SERVER_PID" >/dev/null 2>&1; then
+      echo "brainbar test server exited before binding $socket_path" >&2
+      [[ -f "$BRAINBAR_TEST_SERVER_STDERR" ]] && cat "$BRAINBAR_TEST_SERVER_STDERR" >&2
+      return 1
+    fi
+
+    sleep 0.05
+  done
+
+  echo "timed out waiting for brainbar test server socket $socket_path" >&2
+  [[ -f "$BRAINBAR_TEST_SERVER_STDERR" ]] && cat "$BRAINBAR_TEST_SERVER_STDERR" >&2
+  return 1
 }
 
 @test "brainbar-adapter pipes stdin through unix socket to stdout" {

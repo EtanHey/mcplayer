@@ -11,7 +11,8 @@
   },
   "scripts": {
     "test": "bats tests/",
-    "test:ci": "bats tests/ --formatter tap"
+    "test:ci": "bats tests/ --formatter tap",
+    "test:load": "bun test ./tests/integration/test_load.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.2"
