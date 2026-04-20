@@ -242,6 +242,15 @@ kill_process() {
   kill "$@"
 }
 
+start_brainbar() {
+  local uid
+  uid="$(id -u)"
+
+  launchctl kickstart -k "gui/${uid}/com.brainlayer.brainbar" >/dev/null 2>&1 \
+    || launchctl kickstart -k "com.brainlayer.brainbar" >/dev/null 2>&1 \
+    || launchctl start "com.brainlayer.brainbar" >/dev/null 2>&1
+}
+
 is_orphan_pid() {
   local target="$1"
   local pid
@@ -404,6 +413,30 @@ cmd_nuke() {
   fi
 }
 
+cmd_up() {
+  parse_flags "$@"
+
+  local brainbar_pid
+  brainbar_pid="$(current_brainbar_pid 2>/dev/null || true)"
+  if [[ -n "$brainbar_pid" ]]; then
+    echo "mcplayer up"
+    echo "BrainBar already running [${brainbar_pid}]"
+    return 0
+  fi
+
+  start_brainbar
+
+  brainbar_pid="$(current_brainbar_pid 2>/dev/null || true)"
+  echo "mcplayer up"
+  if [[ -n "$brainbar_pid" ]]; then
+    echo "BrainBar running [${brainbar_pid}]"
+    return 0
+  fi
+
+  echo "BrainBar failed to start" >&2
+  return 1
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -421,7 +454,10 @@ case "$cmd" in
   nuke)
     cmd_nuke "${@:2}"
     ;;
-  up|down)
+  up)
+    cmd_up "${@:2}"
+    ;;
+  down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
