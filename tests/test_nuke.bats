@@ -12,11 +12,20 @@ teardown() {
   teardown_mcplayer_test
 }
 
-@test "mcplayer nuke requires --yes before killing anything" {
+@test "mcplayer nuke defaults to dry-run and does not call kill" {
   run_mcplayer nuke
 
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"requires --yes"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"100"* ]]
+  [[ ! -s "$MCPLAYER_KILL_LOG" ]]
+}
+
+@test "mcplayer nuke --dry-run works without --yes" {
+  run_mcplayer nuke --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
   [[ ! -s "$MCPLAYER_KILL_LOG" ]]
 }
 
