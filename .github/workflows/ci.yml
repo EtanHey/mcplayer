@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - phase-1-cli
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: brew install bats-core
+
+      - name: Syntax check
+        run: zsh -n bin/mcplayer
+
+      - name: Run bats suite
+        run: bats tests
