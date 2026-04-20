@@ -41,3 +41,20 @@ See `docs.local/` and the orchestrator's research docs at `~/Gits/orchestrator/d
 ## License
 
 MIT
+
+## Install the daemon
+
+Phase 2 adds the LaunchAgent-backed daemon lifecycle for mcplayer. Install it with:
+
+```bash
+./scripts/install-launchagent.sh
+```
+
+The script installs `launchd/com.mcplayer.multiplexer.plist` into `~/Library/LaunchAgents`,
+substitutes `{{USER_HOME}}` in the plist template, and boots the service in the GUI user launchd domain.
+
+To remove the LaunchAgent:
+
+```bash
+./scripts/uninstall-launchagent.sh
+```
