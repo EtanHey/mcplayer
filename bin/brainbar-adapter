@@ -20,12 +20,11 @@ try {
       },
       close() {
         // Flush any pending stdout before exiting to avoid truncating the last response.
-        // process.stdout is a libuv-backed stream; end() drains before calling the callback.
-        if (process.stdout.writableNeedDrain || !process.stdout.writableFinished) {
-          process.stdout.end(() => process.exit(0));
-        } else {
-          process.exit(0);
-        }
+        // process.stdout is libuv-backed; end(callback) drains before invoking the callback.
+        // We always go through end() because writableFinished is only true AFTER end() has
+        // been called — the conditional short-circuit would be dead code (per Bugbot LOW
+        // finding on commit 774cd69).
+        process.stdout.end(() => process.exit(0));
       },
     },
   });
