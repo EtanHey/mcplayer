@@ -1,0 +1,36 @@
+#!/usr/bin/env bun
+
+const SOCK = Bun.env.BRAINBAR_SOCKET_PATH || "/tmp/brainbar.sock";
+
+let socket;
+try {
+  socket = await Bun.connect({
+    unix: SOCK,
+    socket: {
+      data(_, data) {
+        Bun.write(Bun.stdout, data);
+      },
+      error(_, error) {
+        console.error(`[brainbar-adapter] socket error: ${error}`);
+        process.exit(1);
+      },
+      close() {
+        process.exit(0);
+      },
+    },
+  });
+} catch (error) {
+  console.error(`[brainbar-adapter] connect failed: ${error}`);
+  process.exit(1);
+}
+
+for await (const chunk of Bun.stdin.stream()) {
+  try {
+    socket.write(chunk);
+  } catch (error) {
+    console.error(`[brainbar-adapter] socket write failed: ${error}`);
+    process.exit(1);
+  }
+}
+
+socket.end();
