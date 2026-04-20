@@ -95,7 +95,7 @@ function classify(comm, args, text) {
   if (text ~ /syspolicyd/) {
     return "system"
   }
-  if (comm ~ /^(bun|node|python|python3|uv|npm|socat)$/ && text ~ /(mcp|cmuxlayer|voicelayer|brainbar\.sock|google-drive|figma|browser-tools|context7|linear|notebooklm|whatsapp-mcp)/) {
+  if (comm ~ /^(bun|node|python|python3|uv|npm|socat)$/ && text ~ /(mcp|cmuxlayer|voicelayer|brainbar\.sock|brainbar-adapter|google-drive|figma|browser-tools|context7|linear|notebooklm|whatsapp-mcp)/) {
     return "mcp"
   }
   return "other"
@@ -104,6 +104,9 @@ function label(comm, args, text) {
   text = tolower(args)
   if (tolower(comm) == "socat" && text ~ /brainbar\.sock/) {
     return "brainbar-socket"
+  }
+  if (text ~ /brainbar-adapter/) {
+    return "brainbar-adapter"
   }
   if (tolower(comm) ~ /brainbar/ || text ~ /brainbar/) {
     return "BrainBar"

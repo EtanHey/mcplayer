@@ -18,8 +18,30 @@ jobs:
       - name: Install bats-core
         run: brew install bats-core
 
-      - name: Syntax check
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Syntax check (zsh CLI)
         run: zsh -n bin/mcplayer
+
+      - name: Syntax check (Bun adapter)
+        # Real syntax/parse validation: run the adapter with a guaranteed-missing socket.
+        # If the adapter parses correctly, it exits 1 (connect failed).
+        # A syntax/runtime error produces a different exit code (2/137), failing the assertion.
+        #
+        # GitHub Actions defaults to `bash -e {0}` — a non-zero exit aborts the step before
+        # our check runs. We capture the exit code with `|| rc=$?` which bypasses `set -e`,
+        # then assert inside a non-conditional tail so the step exits clean.
+        run: |
+          rc=0
+          BRAINBAR_SOCKET_PATH=/tmp/mcplayer-ci-syntax-probe-$$.sock bin/brainbar-adapter </dev/null || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "Expected exit code 1 (missing socket), got $rc — syntax or runtime error"
+            exit 1
+          fi
+          echo "Adapter parses + executes cleanly (exits 1 on missing socket as expected)"
 
       - name: Run bats suite
         run: bats tests
