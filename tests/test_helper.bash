@@ -6,12 +6,14 @@ setup_mcplayer_test() {
   export MCPLAYER_TEST_BIN="$MCPLAYER_TEST_TMP/bin"
   export MCPLAYER_PS_FIXTURE="$MCPLAYER_TEST_TMP/ps.txt"
   export MCPLAYER_KILL_LOG="$MCPLAYER_TEST_TMP/kill.log"
+  export MCPLAYER_STALE_PIDS_FILE="$MCPLAYER_TEST_TMP/stale-pids.txt"
   export MCPLAYER_LAUNCHCTL_LOG="$MCPLAYER_TEST_TMP/launchctl.log"
   export MCPLAYER_BRAINBAR_PID_FILE="$MCPLAYER_TEST_TMP/brainbar.pid"
   export MCPLAYER_LOAD_VALUE="{ 1.23 1.11 0.99 }"
 
   mkdir -p "$MCPLAYER_TEST_BIN"
   : > "$MCPLAYER_KILL_LOG"
+  : > "$MCPLAYER_STALE_PIDS_FILE"
   : > "$MCPLAYER_LAUNCHCTL_LOG"
 
   create_stub ps '
@@ -30,8 +32,26 @@ exit 1
 '
 
   create_stub kill '
+is_stale_pid() {
+  local target="$1"
+  grep -Fxq "$target" "$MCPLAYER_STALE_PIDS_FILE"
+}
+
+if [[ "${1:-}" == "-0" ]]; then
+  shift
+  for arg in "$@"; do
+    if is_stale_pid "$arg"; then
+      exit 1
+    fi
+  done
+  exit 0
+fi
+
 printf "%s\n" "$*" >> "$MCPLAYER_KILL_LOG"
 for arg in "$@"; do
+  if is_stale_pid "$arg"; then
+    exit 1
+  fi
   if [[ "$arg" == "300" ]]; then
     rm -f "$MCPLAYER_BRAINBAR_PID_FILE"
   fi
@@ -87,6 +107,10 @@ set_brainbar_running() {
 
 set_brainbar_stopped() {
   rm -f "$MCPLAYER_BRAINBAR_PID_FILE"
+}
+
+mark_pid_stale() {
+  printf "%s\n" "$1" >> "$MCPLAYER_STALE_PIDS_FILE"
 }
 
 run_mcplayer() {

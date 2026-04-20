@@ -102,6 +102,9 @@ function classify(comm, args, text) {
 }
 function label(comm, args, text) {
   text = tolower(args)
+  if (tolower(comm) == "socat" && text ~ /brainbar\.sock/) {
+    return "brainbar-socket"
+  }
   if (tolower(comm) ~ /brainbar/ || text ~ /brainbar/) {
     return "BrainBar"
   }
@@ -128,9 +131,6 @@ function label(comm, args, text) {
   }
   if (text ~ /whatsapp-mcp/) {
     return "whatsapp-mcp"
-  }
-  if (tolower(comm) == "socat" && text ~ /brainbar\.sock/) {
-    return "brainbar-socket"
   }
   return comm
 }
@@ -232,14 +232,40 @@ current_brainbar_pid() {
 
 kill_process() {
   local kill_bin
+  local pid kill_status
 
   kill_bin="$(whence -p kill 2>/dev/null || true)"
-  if [[ -n "$kill_bin" ]]; then
-    "$kill_bin" "$@"
-    return
-  fi
 
-  kill "$@"
+  for pid in "$@"; do
+    # PIDs can disappear between discovery and kill; treat that as already done.
+    if [[ -n "$kill_bin" ]]; then
+      if ! "$kill_bin" -0 "$pid" >/dev/null 2>&1; then
+        continue
+      fi
+      kill_status=0
+      "$kill_bin" "$pid" >/dev/null 2>&1 || kill_status=$?
+      if (( kill_status == 0 )); then
+        continue
+      fi
+      if ! "$kill_bin" -0 "$pid" >/dev/null 2>&1; then
+        continue
+      fi
+      return "$kill_status"
+    fi
+
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      continue
+    fi
+    kill_status=0
+    kill "$pid" >/dev/null 2>&1 || kill_status=$?
+    if (( kill_status == 0 )); then
+      continue
+    fi
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      continue
+    fi
+    return "$kill_status"
+  done
 }
 
 start_brainbar() {
@@ -249,17 +275,6 @@ start_brainbar() {
   launchctl kickstart -k "gui/${uid}/com.brainlayer.brainbar" >/dev/null 2>&1 \
     || launchctl kickstart -k "com.brainlayer.brainbar" >/dev/null 2>&1 \
     || launchctl start "com.brainlayer.brainbar" >/dev/null 2>&1
-}
-
-is_orphan_pid() {
-  local target="$1"
-  local pid
-  for pid in "${ORPHAN_IDS[@]}"; do
-    if [[ "$pid" == "$target" ]]; then
-      return 0
-    fi
-  done
-  return 1
 }
 
 print_process_line() {

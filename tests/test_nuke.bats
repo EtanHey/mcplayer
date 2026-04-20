@@ -43,3 +43,13 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$(cat "$MCPLAYER_KILL_LOG")" == *"300"* ]]
 }
+
+@test "mcplayer nuke --yes continues when an early pid is already gone" {
+  mark_pid_stale 100
+
+  run_mcplayer nuke --yes
+
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$MCPLAYER_KILL_LOG")" == *"101"* ]]
+  [[ "$(cat "$MCPLAYER_KILL_LOG")" == *"201"* ]]
+}

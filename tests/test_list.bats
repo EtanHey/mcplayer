@@ -20,3 +20,11 @@ teardown() {
   [[ "$output" == *"bun run /repo/cmuxlayer/src/index.ts"* ]]
   [[ "$output" == *"socat STDIO UNIX-CONNECT:/tmp/brainbar.sock"* ]]
 }
+
+@test "mcplayer list labels the BrainBar socket distinctly" {
+  run_mcplayer list
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"brainbar-socket [102]"* ]]
+  [[ "$output" != *"BrainBar [102]"* ]]
+}
