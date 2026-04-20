@@ -437,6 +437,48 @@ cmd_up() {
   return 1
 }
 
+cmd_down() {
+  parse_flags "$@"
+  load_snapshot
+
+  local pid
+  local brainbar_pid
+  brainbar_pid="$(current_brainbar_pid 2>/dev/null || true)"
+
+  echo "mcplayer down"
+  echo "graceful shutdown order:"
+  echo "1. agents"
+  echo "2. mcp"
+  if [[ -n "$brainbar_pid" ]]; then
+    if (( FLAG_INCLUDE_BRAINBAR == 1 )); then
+      echo "3. brainbar"
+    else
+      echo "3. brainbar (protected)"
+    fi
+  else
+    echo "3. brainbar"
+  fi
+
+  if (( FLAG_YES == 0 || FLAG_DRY_RUN == 1 )); then
+    echo "dry-run: pass --yes to execute"
+    return 0
+  fi
+
+  for pid in "${AGENT_IDS[@]}"; do
+    kill_process "$pid"
+    echo "stopped agent ${PROC_LABEL[$pid]} [${pid}]"
+  done
+  for pid in "${MCP_IDS[@]}"; do
+    kill_process "$pid"
+    echo "stopped mcp ${PROC_LABEL[$pid]} [${pid}]"
+  done
+
+  if [[ -n "$brainbar_pid" ]] && (( FLAG_INCLUDE_BRAINBAR == 1 )); then
+    kill_process "$brainbar_pid"
+    echo "stopped brainbar [${brainbar_pid}]"
+  fi
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -458,10 +500,7 @@ case "$cmd" in
     cmd_up "${@:2}"
     ;;
   down)
-    echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
-    echo "   cmuxlayerCodex is working on this tonight. See:"
-    echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
-    exit 1
+    cmd_down "${@:2}"
     ;;
   --version|-v)
     echo "mcplayer $VERSION"
