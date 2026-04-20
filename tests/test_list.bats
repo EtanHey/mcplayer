@@ -17,6 +17,6 @@ teardown() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude"* ]]
-  [[ "$output" == *"bun run /Users/etanheyman/Gits/cmuxlayer/src/index.ts"* ]]
+  [[ "$output" == *"bun run /repo/cmuxlayer/src/index.ts"* ]]
   [[ "$output" == *"socat STDIO UNIX-CONNECT:/tmp/brainbar.sock"* ]]
 }
