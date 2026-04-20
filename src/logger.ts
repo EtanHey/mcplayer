@@ -1,55 +1,23 @@
 import net from "node:net";
 import type { McplayerConfig } from "./config";
-
-class McpFrameReader {
-  #buffer = Buffer.alloc(0);
-
-  push(chunk: Buffer): unknown[] {
-    this.#buffer = Buffer.concat([this.#buffer, chunk]);
-    const messages: unknown[] = [];
-
-    while (true) {
-      const headerEnd = this.#buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        break;
-      }
-
-      const headerText = this.#buffer.subarray(0, headerEnd).toString("utf8");
-      const contentLength = headerText
-        .split("\r\n")
-        .find((line) => line.toLowerCase().startsWith("content-length:"));
-
-      if (!contentLength) {
-        throw new Error("missing Content-Length header");
-      }
-
-      const bodyLength = Number(contentLength.split(":", 2)[1]?.trim() ?? "0");
-      if (!Number.isInteger(bodyLength) || bodyLength < 0) {
-        throw new Error(`invalid Content-Length header: ${contentLength}`);
-      }
-      const frameEnd = headerEnd + 4 + bodyLength;
-      if (this.#buffer.length < frameEnd) {
-        break;
-      }
-
-      const body = this.#buffer.subarray(headerEnd + 4, frameEnd).toString("utf8");
-      this.#buffer = this.#buffer.subarray(frameEnd);
-      messages.push(JSON.parse(body));
-    }
-
-    return messages;
-  }
-}
-
-function encodeMcpMessage(message: unknown): Buffer {
-  const body = Buffer.from(JSON.stringify(message), "utf8");
-  return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8"), body]);
-}
+import { McpFrameReader, encodeMcpMessage } from "./mcp-framing";
 
 async function connectUnixSocket(socketPath: string): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(socketPath, () => resolve(socket));
-    socket.once("error", reject);
+    const socket = net.createConnection(socketPath);
+
+    const onConnect = () => {
+      socket.off("error", onError);
+      resolve(socket);
+    };
+
+    const onError = (error: Error) => {
+      socket.off("connect", onConnect);
+      reject(error);
+    };
+
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
   });
 }
 
@@ -85,64 +53,79 @@ async function callBrainStore(
 ): Promise<void> {
   const socket = await connectUnixSocket(socketPath);
   const reader = new McpFrameReader();
-  let timeoutHandle: NodeJS.Timeout | undefined;
 
   const cleanup = () => {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-      timeoutHandle = undefined;
-    }
     socket.removeAllListeners("data");
     socket.removeAllListeners("error");
-    socket.removeAllListeners("timeout");
+    socket.removeAllListeners("end");
+    socket.removeAllListeners("close");
     socket.end();
     socket.destroy();
   };
 
   const waitForResponse = async (expectedId: number): Promise<void> => {
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const finish = (error?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
+        socket.off("data", onData);
+        socket.off("error", onError);
+        socket.off("end", onEnd);
+        socket.off("close", onClose);
+
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      };
+
       const onData = (chunk: Buffer) => {
         try {
           const messages = reader.push(Buffer.from(chunk));
           for (const message of messages) {
             const payload = message as Record<string, unknown>;
             if (payload.id === expectedId) {
-              socket.off("data", onData);
-              socket.off("error", onError);
-              socket.off("timeout", onTimeout);
-              resolve();
+              finish();
               return;
             }
           }
         } catch (error) {
-          socket.off("data", onData);
-          socket.off("error", onError);
-          socket.off("timeout", onTimeout);
-          reject(error);
+          finish(error instanceof Error ? error : new Error(String(error)));
         }
       };
 
       const onError = (error: Error) => {
-        socket.off("data", onData);
-        socket.off("timeout", onTimeout);
-        reject(error);
+        finish(error);
       };
 
-      const onTimeout = () => {
-        socket.off("data", onData);
-        socket.off("error", onError);
-        reject(new Error(`brainbar log timeout after ${timeoutMs}ms`));
+      const onEnd = () => {
+        finish(new Error("brainbar log socket ended before response"));
       };
+
+      const onClose = () => {
+        finish(new Error("brainbar log socket closed before response"));
+      };
+
+      timeoutHandle = setTimeout(() => {
+        finish(new Error(`brainbar log timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
 
       socket.on("data", onData);
       socket.once("error", onError);
-      socket.once("timeout", onTimeout);
+      socket.once("end", onEnd);
+      socket.once("close", onClose);
     });
   };
-
-  timeoutHandle = setTimeout(() => {
-    socket.emit("timeout");
-  }, timeoutMs);
 
   try {
     await writeAll(
