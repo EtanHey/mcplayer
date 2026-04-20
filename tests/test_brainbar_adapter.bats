@@ -90,10 +90,12 @@ EOF_SERVER
 }
 
 @test "brainbar-adapter exits 1 when socket is missing" {
-  run bash -c "printf 'orphan' | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter"
+  # bash -c redirects stderr and stdout into bats's $output (combined stream).
+  # We don't use `run --separate-stderr` (BATS 1.5+) because the combined check is sufficient here.
+  run bash -c "printf 'orphan' | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter 2>&1"
 
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"connect"* ]] || [[ "$output" == *"connect"* ]]
+  [[ "$output" == *"connect"* ]]
 }
 
 @test "brainbar-adapter closes socket on stdin EOF" {
