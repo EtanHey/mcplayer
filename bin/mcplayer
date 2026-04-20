@@ -214,6 +214,22 @@ load_average() {
   sysctl -n vm.loadavg 2>/dev/null || echo "unavailable"
 }
 
+current_brainbar_pid() {
+  local pids
+
+  if pids="$(pgrep -f BrainBar 2>/dev/null)"; then
+    echo "${pids%%$'\n'*}"
+    return 0
+  fi
+
+  if [[ -n "$BRAINBAR_PID" ]]; then
+    echo "$BRAINBAR_PID"
+    return 0
+  fi
+
+  return 1
+}
+
 kill_process() {
   local kill_bin
 
@@ -337,6 +353,57 @@ cmd_clean() {
   done
 }
 
+cmd_nuke() {
+  parse_flags "$@"
+  load_snapshot
+
+  local pid
+  local brainbar_pid=""
+  local -a target_ids=()
+
+  echo "mcplayer nuke"
+  if (( FLAG_YES == 0 )); then
+    echo "requires --yes to kill agents and MCP runtimes"
+    return 2
+  fi
+
+  target_ids=("${AGENT_IDS[@]}" "${MCP_IDS[@]}")
+  brainbar_pid="$(current_brainbar_pid 2>/dev/null || true)"
+
+  if (( FLAG_DRY_RUN == 1 )); then
+    echo "dry-run: would kill agent and MCP runtimes"
+    for pid in "${target_ids[@]}"; do
+      echo "- ${PROC_LABEL[$pid]} [${pid}]"
+    done
+    if [[ -n "$brainbar_pid" ]]; then
+      if (( FLAG_INCLUDE_BRAINBAR == 1 )); then
+        echo "- BrainBar [${brainbar_pid}]"
+      else
+        echo "- BrainBar [${brainbar_pid}] protected"
+      fi
+    fi
+    return 0
+  fi
+
+  for pid in "${AGENT_IDS[@]}"; do
+    kill_process "$pid"
+    echo "killed agent ${PROC_LABEL[$pid]} [${pid}]"
+  done
+  for pid in "${MCP_IDS[@]}"; do
+    kill_process "$pid"
+    echo "killed mcp ${PROC_LABEL[$pid]} [${pid}]"
+  done
+
+  if [[ -n "$brainbar_pid" ]]; then
+    if (( FLAG_INCLUDE_BRAINBAR == 1 )); then
+      kill_process "$brainbar_pid"
+      echo "killed BrainBar [${brainbar_pid}]"
+    else
+      echo "protected BrainBar [${brainbar_pid}]"
+    fi
+  fi
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -351,7 +418,10 @@ case "$cmd" in
   clean)
     cmd_clean "${@:2}"
     ;;
-  nuke|up|down)
+  nuke)
+    cmd_nuke "${@:2}"
+    ;;
+  up|down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
