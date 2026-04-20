@@ -24,11 +24,17 @@ async function connectUnixSocket(socketPath: string): Promise<net.Socket> {
 async function writeAll(socket: net.Socket, buffer: Buffer): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      socket.off("drain", onDrain);
+      socket.off("error", onError);
+    };
+
     const finish = (error?: Error | null) => {
       if (settled) {
         return;
       }
       settled = true;
+      cleanup();
       if (error) {
         reject(error);
         return;
@@ -36,9 +42,18 @@ async function writeAll(socket: net.Socket, buffer: Buffer): Promise<void> {
       resolve();
     };
 
+    const onDrain = () => {
+      finish();
+    };
+
+    const onError = (error: Error) => {
+      finish(error);
+    };
+
     const wroteImmediately = socket.write(buffer, finish);
     if (!wroteImmediately) {
-      socket.once("drain", () => finish());
+      socket.once("drain", onDrain);
+      socket.once("error", onError);
     }
   });
 }
@@ -95,6 +110,11 @@ async function callBrainStore(
           for (const message of messages) {
             const payload = message as Record<string, unknown>;
             if (payload.id === expectedId) {
+              if (Object.prototype.hasOwnProperty.call(payload, "error")) {
+                const responseError = payload.error as { message?: string } | undefined;
+                finish(new Error(responseError?.message ?? "brainbar MCP error response"));
+                return;
+              }
               finish();
               return;
             }
@@ -168,10 +188,6 @@ async function callBrainStore(
   } finally {
     cleanup();
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export interface LogPayload {

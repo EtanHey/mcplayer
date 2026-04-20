@@ -21,13 +21,18 @@ let shutdownPromise: Promise<void> | undefined;
 
 const shutdown = (signal: string): Promise<void> => {
   if (!shutdownPromise) {
-    shutdownPromise = broker.shutdown(signal).catch((error) => {
-      logger.error("daemon-shutdown-failed", {
-        signal,
-        error: error instanceof Error ? error.message : String(error),
+    shutdownPromise = broker
+      .shutdown(signal)
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((error) => {
+        logger.error("daemon-shutdown-failed", {
+          signal,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        process.exit(1);
       });
-      process.exit(1);
-    });
   }
   return shutdownPromise;
 };

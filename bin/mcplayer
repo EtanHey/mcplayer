@@ -553,11 +553,12 @@ cmd_daemon_stop() {
 cmd_daemon_status() {
   parse_flags "$@"
 
-  local socket_path status_payload
+  local socket_path status_payload netcat_timeout
   socket_path="$(daemon_socket_path)"
+  netcat_timeout="${MCPLAYER_NETCAT_TIMEOUT:-5}"
 
   echo "mcplayer daemon status"
-  if ! status_payload="$(printf 'CONTROL:status\n' | nc -U "$socket_path" 2>/dev/null)"; then
+  if ! status_payload="$(printf 'CONTROL:status\n' | nc -w "$netcat_timeout" -U "$socket_path" 2>/dev/null)"; then
     echo "daemon unavailable at $socket_path" >&2
     return 1
   fi

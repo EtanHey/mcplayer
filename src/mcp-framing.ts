@@ -1,8 +1,23 @@
+const DEFAULT_MAX_FRAME_SIZE = 10 * 1024 * 1024;
+
 export class McpFrameReader {
   #buffer = Buffer.alloc(0);
+  #maxFrameSize: number;
+
+  constructor(maxFrameSize = DEFAULT_MAX_FRAME_SIZE) {
+    this.#maxFrameSize = maxFrameSize;
+  }
 
   push(chunk: Buffer | Uint8Array): unknown[] {
-    this.#buffer = Buffer.concat([this.#buffer, Buffer.from(chunk)]);
+    const incoming = Buffer.from(chunk);
+    const combinedLength = this.#buffer.length + incoming.length;
+    if (combinedLength > this.#maxFrameSize) {
+      throw new Error(
+        `frame buffer exceeds maximum size ${this.#maxFrameSize} bytes: ${combinedLength}`,
+      );
+    }
+
+    this.#buffer = Buffer.concat([this.#buffer, incoming]);
     const messages: unknown[] = [];
 
     while (true) {
@@ -24,8 +39,18 @@ export class McpFrameReader {
       if (!Number.isInteger(bodyLength) || bodyLength < 0) {
         throw new Error(`invalid Content-Length header: ${contentLength}`);
       }
+      if (bodyLength > this.#maxFrameSize) {
+        throw new Error(
+          `Content-Length ${bodyLength} exceeds maximum frame size ${this.#maxFrameSize}`,
+        );
+      }
 
       const frameEnd = headerEnd + 4 + bodyLength;
+      if (frameEnd > this.#maxFrameSize) {
+        throw new Error(
+          `frame length ${frameEnd} exceeds maximum frame size ${this.#maxFrameSize}`,
+        );
+      }
       if (this.#buffer.length < frameEnd) {
         break;
       }
