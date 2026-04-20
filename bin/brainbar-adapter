@@ -8,14 +8,24 @@ try {
     unix: SOCK,
     socket: {
       data(_, data) {
-        Bun.write(Bun.stdout, data);
+        // Synchronous stdout write — Bun.write returns a Promise we can't easily
+        // await from a callback without racing the close handler. process.stdout.write
+        // is backed by the libuv tty/pipe write which buffers internally and flushes
+        // on exit, so no data truncation on process.exit.
+        process.stdout.write(data);
       },
       error(_, error) {
         console.error(`[brainbar-adapter] socket error: ${error}`);
         process.exit(1);
       },
       close() {
-        process.exit(0);
+        // Flush any pending stdout before exiting to avoid truncating the last response.
+        // process.stdout is a libuv-backed stream; end() drains before calling the callback.
+        if (process.stdout.writableNeedDrain || !process.stdout.writableFinished) {
+          process.stdout.end(() => process.exit(0));
+        } else {
+          process.exit(0);
+        }
       },
     },
   });
@@ -25,11 +35,25 @@ try {
 }
 
 for await (const chunk of Bun.stdin.stream()) {
-  try {
-    socket.write(chunk);
-  } catch (error) {
-    console.error(`[brainbar-adapter] socket write failed: ${error}`);
-    process.exit(1);
+  let offset = 0;
+  while (offset < chunk.length) {
+    try {
+      const written = socket.write(chunk.subarray(offset));
+      if (written < 0) {
+        // Socket closed or errored mid-write
+        console.error(`[brainbar-adapter] socket write failed: write returned ${written}`);
+        process.exit(1);
+      }
+      if (written === 0) {
+        // Backpressure — yield to the event loop so the drain can progress, then retry
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
+      offset += written;
+    } catch (error) {
+      console.error(`[brainbar-adapter] socket write threw: ${error}`);
+      process.exit(1);
+    }
   }
 }
 

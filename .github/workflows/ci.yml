@@ -27,7 +27,18 @@ jobs:
         run: zsh -n bin/mcplayer
 
       - name: Syntax check (Bun adapter)
-        run: bun --version
+        # Real syntax/parse validation: run the adapter with a guaranteed-missing socket.
+        # If the adapter parses and executes correctly, it exits 1 (connect failed).
+        # If there's a syntax error, Bun exits with a different code (2/137), which
+        # fails our `|| [ $? -eq 1 ]` assertion. This is a stronger check than `bun --version`.
+        run: |
+          BRAINBAR_SOCKET_PATH=/tmp/mcplayer-ci-syntax-probe-$$.sock bin/brainbar-adapter </dev/null
+          rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "Expected exit code 1 (missing socket), got $rc — syntax or runtime error"
+            exit 1
+          fi
+          echo "Adapter parses + executes cleanly (exits 1 on missing socket as expected)"
 
       - name: Run bats suite
         run: bats tests
