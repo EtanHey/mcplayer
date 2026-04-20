@@ -22,6 +22,9 @@ typeset -gA PROC_LABEL=()
 typeset -gA AGENT_BY_PGID=()
 typeset -g BRAINBAR_PID=""
 typeset -g SYSPOLICYD_CPU="0.0"
+typeset -g FLAG_YES=0
+typeset -g FLAG_DRY_RUN=0
+typeset -g FLAG_INCLUDE_BRAINBAR=0
 
 usage() {
   cat <<EOF
@@ -52,6 +55,31 @@ EXAMPLES:
   mcplayer clean --yes        # actually kills
   mcplayer nuke --yes         # kill everything except BrainBar
 EOF
+}
+
+parse_flags() {
+  FLAG_YES=0
+  FLAG_DRY_RUN=0
+  FLAG_INCLUDE_BRAINBAR=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes)
+        FLAG_YES=1
+        ;;
+      --dry-run)
+        FLAG_DRY_RUN=1
+        ;;
+      --include-brainbar)
+        FLAG_INCLUDE_BRAINBAR=1
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
 }
 
 snapshot_records() {
@@ -186,6 +214,18 @@ load_average() {
   sysctl -n vm.loadavg 2>/dev/null || echo "unavailable"
 }
 
+kill_process() {
+  local kill_bin
+
+  kill_bin="$(whence -p kill 2>/dev/null || true)"
+  if [[ -n "$kill_bin" ]]; then
+    "$kill_bin" "$@"
+    return
+  fi
+
+  kill "$@"
+}
+
 is_orphan_pid() {
   local target="$1"
   local pid
@@ -271,18 +311,47 @@ cmd_orphans() {
   done
 }
 
+cmd_clean() {
+  parse_flags "$@"
+  load_snapshot
+
+  local pid
+  if (( ${#ORPHAN_IDS[@]} == 0 )); then
+    echo "mcplayer clean"
+    echo "no orphan runtimes found"
+    return 0
+  fi
+
+  echo "mcplayer clean"
+  if (( FLAG_YES == 0 || FLAG_DRY_RUN == 1 )); then
+    echo "dry-run: would kill orphan runtimes"
+    for pid in "${ORPHAN_IDS[@]}"; do
+      echo "- ${PROC_LABEL[$pid]} [${pid}]"
+    done
+    return 0
+  fi
+
+  for pid in "${ORPHAN_IDS[@]}"; do
+    kill_process "$pid"
+    echo "killed ${PROC_LABEL[$pid]} [${pid}]"
+  done
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
-    cmd_status
+    cmd_status "${@:2}"
     ;;
   list)
-    cmd_list
+    cmd_list "${@:2}"
     ;;
   orphans)
-    cmd_orphans
+    cmd_orphans "${@:2}"
     ;;
-  clean|nuke|up|down)
+  clean)
+    cmd_clean "${@:2}"
+    ;;
+  nuke|up|down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
