@@ -65,6 +65,9 @@ class McpFrameReader {
       }
 
       const bodyLength = Number(contentLength.split(":", 2)[1]?.trim() ?? "0");
+      if (!Number.isInteger(bodyLength) || bodyLength < 0) {
+        throw new Error(`invalid Content-Length header: ${contentLength}`);
+      }
       const frameEnd = headerEnd + 4 + bodyLength;
       if (this.#buffer.length < frameEnd) {
         break;
