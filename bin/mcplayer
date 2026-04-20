@@ -262,6 +262,15 @@ cmd_list() {
   done
 }
 
+cmd_orphans() {
+  load_snapshot
+
+  echo "mcplayer orphans"
+  for pid in "${ORPHAN_IDS[@]}"; do
+    echo "- ${PROC_LABEL[$pid]} [${pid}] uptime=${PROC_ETIME[$pid]} ${PROC_ARGS[$pid]}"
+  done
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -270,7 +279,10 @@ case "$cmd" in
   list)
     cmd_list
     ;;
-  orphans|clean|nuke|up|down)
+  orphans)
+    cmd_orphans
+    ;;
+  clean|nuke|up|down)
     echo "❌ mcplayer $cmd: NOT YET IMPLEMENTED"
     echo "   cmuxlayerCodex is working on this tonight. See:"
     echo "   ~/Gits/orchestrator/collab/2026-04-20-mcplayer-overnight-sprint.md"
