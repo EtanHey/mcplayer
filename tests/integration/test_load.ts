@@ -443,20 +443,11 @@ function runCommand(
 }
 
 function serviceIsLoaded(): boolean {
-  return launchctlPrintResult({ allowFailure: true }).exitCode === 0;
+  return runCommand(["launchctl", "print", SERVICE_TARGET], { allowFailure: true }).exitCode === 0;
 }
 
-function launchctlPrintResult(
-  options: { allowFailure?: boolean } = {},
-): { stdout: string; stderr: string; exitCode: number | null } {
-  const result = runCommand(["launchctl", "print", SERVICE_TARGET], {
-    allowFailure: options.allowFailure,
-  });
-  return result;
-}
-
-function launchctlPrint(options: { allowFailure?: boolean } = {}): string {
-  return launchctlPrintResult(options).stdout;
+function launchctlPrint(): string {
+  return runCommand(["launchctl", "print", SERVICE_TARGET]).stdout;
 }
 
 function bootoutService(): void {
