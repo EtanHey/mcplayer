@@ -56,8 +56,9 @@ export class McpFrameReader {
       }
 
       const body = this.#buffer.subarray(headerEnd + 4, frameEnd).toString("utf8");
+      const message = JSON.parse(body);
       this.#buffer = this.#buffer.subarray(frameEnd);
-      messages.push(JSON.parse(body));
+      messages.push(message);
     }
 
     return messages;
