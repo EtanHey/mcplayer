@@ -103,10 +103,9 @@ wait_for_brainbar_server() {
 }
 
 @test "brainbar-adapter pipes stdin through unix socket to stdout" {
-  skip "Flaky: Python UDS mock race vs adapter socket.end() timing. Adapter verified against real BrainBar (produces identical output to socat). Follow-up task #53 to replace Python mock with handshake-aware mock or migrate to integration test that requires BrainBar running."
   start_brainbar_server echo
 
-  run bash -c "printf 'ping-stdio' | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter"
+  run bash -c "( printf 'ping-stdio'; sleep 0.2 ) | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter"
 
   [ "$status" -eq 0 ]
   [ "$output" = "ping-stdio" ]
@@ -123,10 +122,9 @@ wait_for_brainbar_server() {
 }
 
 @test "brainbar-adapter closes socket on stdin EOF" {
-  skip "Flaky: same race as test 1. Adapter close-on-stdin-EOF verified manually via 'echo ... | adapter' and exit code 0."
   start_brainbar_server close-after-data
 
-  run bash -c "printf 'close-on-eof' | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter"
+  run bash -c "( printf 'close-on-eof'; sleep 0.2 ) | BRAINBAR_SOCKET_PATH='$BRAINBAR_TEST_SOCKET' '$BATS_TEST_DIRNAME'/../bin/brainbar-adapter"
 
   [ "$status" -eq 0 ]
   [ "$output" = "close-on-eof" ]

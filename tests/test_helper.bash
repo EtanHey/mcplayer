@@ -97,7 +97,20 @@ fixture_default_processes() {
 150 1 150 4.0 00:20:00 BrainBar /Applications/BrainBar.app/Contents/MacOS/BrainBar
 200 1 200 2.4 00:05:00 bun bun run /repo/cmuxlayer/src/index.ts
 201 1 201 0.7 00:04:10 node node /tmp/google-drive-mcp/index.js
+  250 1 250 18.0 00:30:00 syspolicyd /usr/libexec/syspolicyd
+EOF
+}
+
+fixture_fullpath_codex_processes() {
+  cat > "$MCPLAYER_PS_FIXTURE" <<'EOF'
+100 1 100 0.1 00:10:00 claude claude --agent coach
+101 100 100 1.2 00:09:58 bun bun run /repo/cmuxlayer/src/index.ts
+102 100 100 0.0 00:09:57 socat socat STDIO UNIX-CONNECT:/tmp/brainbar.sock
+150 1 150 4.0 00:20:00 BrainBar /Applications/BrainBar.app/Contents/MacOS/BrainBar
+200 1 200 2.4 00:05:00 bun bun run /repo/cmuxlayer/src/index.ts
+201 1 201 0.7 00:04:10 node node /tmp/google-drive-mcp/index.js
 250 1 250 18.0 00:30:00 syspolicyd /usr/libexec/syspolicyd
+260 1 260 0.2 00:01:00 /Users/etanheyman/.bun/install/global/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex codex --agent coach
 EOF
 }
 
