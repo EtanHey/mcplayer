@@ -262,6 +262,19 @@ afterAll(async () => {
   }
 });
 
+test("renderTestPlist resolves the daemon entrypoint from REPO_ROOT", () => {
+  const fakeRepoRoot = "/tmp/mcplayer-checkout";
+  const fakeUserHome = "/tmp/test-home";
+  const template = readFileSync(
+    path.join(REPO_ROOT, "launchd", `${SERVICE_LABEL}.plist`),
+    "utf8",
+  );
+
+  const rendered = renderTestPlistTemplate(template, fakeUserHome, fakeRepoRoot);
+  expect(rendered).toContain(`${fakeRepoRoot}/src/index.ts`);
+  expect(rendered).not.toContain(`${fakeUserHome}/Gits/mcplayer/src/index.ts`);
+});
+
 test(
   "launchd daemon multiplexes 5 concurrent clients without drops, crashes, syspolicyd spikes, or orphaned MCP processes",
   async () => {
@@ -374,8 +387,14 @@ test(
 
 function renderTestPlist(): void {
   const templatePath = path.join(REPO_ROOT, "launchd", `${SERVICE_LABEL}.plist`);
-  const rendered = readFileSync(templatePath, "utf8").replaceAll("{{USER_HOME}}", homedir());
+  const rendered = renderTestPlistTemplate(readFileSync(templatePath, "utf8"), homedir(), REPO_ROOT);
   writeFileSync(state.plistPath, rendered, "utf8");
+}
+
+function renderTestPlistTemplate(template: string, userHome: string, repoRoot: string): string {
+  return template
+    .replaceAll("{{USER_HOME}}/Gits/mcplayer", repoRoot)
+    .replaceAll("{{USER_HOME}}", userHome);
 }
 
 function writeTestConfig(): void {
