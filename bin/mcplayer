@@ -91,7 +91,7 @@ function classify(comm, args, text) {
   if (tolower(comm) ~ /brainbar$/ || args ~ /(^|[[:space:]])[^[:space:]]*BrainBar([[:space:]]|$)/) {
     return "brainbar"
   }
-  if (comm ~ /^(claude|codex|cursor|gemini)$/ || text ~ /(^|[[:space:]])(claude|codex|cursor|gemini)([[:space:]]|$)/) {
+  if (tolower(comm) ~ /(^|\/)(claude|codex|cursor|gemini)$/ || text ~ /(^|[[:space:]])(claude|codex|cursor|gemini)([[:space:]]|$)/) {
     return "agent"
   }
   if (text ~ /syspolicyd/) {

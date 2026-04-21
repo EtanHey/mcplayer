@@ -20,3 +20,12 @@ teardown() {
   [[ "$output" == *"syspolicyd:"* ]]
   [[ "$output" == *"load:"* ]]
 }
+
+@test "mcplayer status classifies full-path codex command as agent" {
+  fixture_fullpath_codex_processes
+
+  run_mcplayer status
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MCP procs: 4 total (agents: 2, orphans: 2)"* ]]
+}
