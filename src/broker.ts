@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { chmodSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -110,6 +110,18 @@ export class McplayerBroker {
         },
       },
     });
+
+    // Security: owner-only socket (cyberMaster H5 2026-04-23)
+    try {
+      chmodSync(this.#socketPath, 0o600);
+    } catch (error) {
+      this.#logger.error("daemon-socket-permissions", {
+        socketPath: this.#socketPath,
+        mode: "0600",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     await this.#warmPools();
 
