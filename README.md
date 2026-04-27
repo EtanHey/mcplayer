@@ -44,6 +44,12 @@ MIT
 
 ## Install the daemon
 
+To run the regression gate before every push, configure Git hooks once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 Phase 2 adds the LaunchAgent-backed daemon lifecycle for mcplayer. Install it with:
 
 ```bash
