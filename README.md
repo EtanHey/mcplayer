@@ -64,3 +64,11 @@ To remove the LaunchAgent:
 ```bash
 ./scripts/uninstall-launchagent.sh
 ```
+
+Regression load tests require k6 for the fan-out timeout path:
+
+```bash
+brew install k6
+# or
+brew bundle
+```
