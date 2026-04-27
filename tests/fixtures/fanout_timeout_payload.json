@@ -1,0 +1,1206 @@
+{
+  "target": "fanout-timeout",
+  "request_timeout_ms": 500,
+  "requests": [
+    {
+      "id": 1,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 33
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 2,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 46
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 3,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 59
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 4,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 72
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 5,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 85
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 6,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 98
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 7,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 111
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 8,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 124
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 9,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 137
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 10,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 150
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 11,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 163
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 12,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 176
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 13,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 189
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 14,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 202
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 15,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 215
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 16,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 228
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 17,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 241
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 18,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 254
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 19,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 267
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 20,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 280
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 21,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 293
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 22,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 306
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 23,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 319
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 24,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 332
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 25,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 345
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 26,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 358
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 27,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 371
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 28,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 24
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 29,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 37
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 30,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 50
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 31,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 63
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 32,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 76
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 33,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 89
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 34,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 102
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 35,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 115
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 36,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 128
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 37,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 141
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 38,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 154
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 39,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 167
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 40,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 180
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 41,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 193
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 42,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 206
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 43,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 219
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 44,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 232
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 45,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 245
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 46,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 258
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 47,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 271
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 48,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 284
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 49,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 297
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 50,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 310
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 51,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 323
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 52,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 336
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 53,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 349
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 54,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 362
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 55,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 375
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 56,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 28
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 57,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 41
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 58,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 54
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 59,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 67
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 60,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 80
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 61,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 93
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 62,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 106
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 63,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 119
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 64,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 132
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 65,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 145
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 66,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 158
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 67,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 171
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 68,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 184
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 69,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 197
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 70,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 210
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 71,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 223
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 72,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 236
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 73,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 249
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 74,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 262
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 75,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 275
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 76,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 288
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 77,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 301
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 78,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 314
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 79,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 327
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 80,
+      "name": "echo",
+      "arguments": {
+        "delay_ms": 340
+      },
+      "expected_status_code": 200,
+      "expected": {
+        "kind": "result",
+        "status_code": 200
+      }
+    },
+    {
+      "id": 81,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 57
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 82,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 64
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 83,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 71
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 84,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 78
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 85,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 85
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 86,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 92
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 87,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 99
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 88,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 106
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 89,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 113
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 90,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 120
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 91,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 127
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 92,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 54
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 93,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 61
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 94,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 68
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 95,
+      "name": "invalid",
+      "arguments": {
+        "delay_ms": 75
+      },
+      "expected_status_code": -32601,
+      "expected": {
+        "kind": "error",
+        "status_code": -32601
+      }
+    },
+    {
+      "id": 96,
+      "name": "timeout",
+      "arguments": {
+        "delay_ms": 620
+      },
+      "expected_status_code": -32000,
+      "expected": {
+        "kind": "error",
+        "status_code": -32000
+      }
+    },
+    {
+      "id": 97,
+      "name": "timeout",
+      "arguments": {
+        "delay_ms": 630
+      },
+      "expected_status_code": -32000,
+      "expected": {
+        "kind": "error",
+        "status_code": -32000
+      }
+    },
+    {
+      "id": 98,
+      "name": "timeout",
+      "arguments": {
+        "delay_ms": 640
+      },
+      "expected_status_code": -32000,
+      "expected": {
+        "kind": "error",
+        "status_code": -32000
+      }
+    },
+    {
+      "id": 99,
+      "name": "timeout",
+      "arguments": {
+        "delay_ms": 650
+      },
+      "expected_status_code": -32000,
+      "expected": {
+        "kind": "error",
+        "status_code": -32000
+      }
+    },
+    {
+      "id": 100,
+      "name": "timeout",
+      "arguments": {
+        "delay_ms": 660
+      },
+      "expected_status_code": -32000,
+      "expected": {
+        "kind": "error",
+        "status_code": -32000
+      }
+    }
+  ]
+}
