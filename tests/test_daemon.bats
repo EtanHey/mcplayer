@@ -20,11 +20,17 @@ setup() {
   export MCPLAYER_BRAINBAR_PID=""
   export MCPLAYER_CLIENT_A_OUT="$MCPLAYER_DAEMON_TEST_TMP/client-a.jsonl"
   export MCPLAYER_CLIENT_B_OUT="$MCPLAYER_DAEMON_TEST_TMP/client-b.jsonl"
+  export MCPLAYER_NOTIFY_LOG="$MCPLAYER_DAEMON_TEST_TMP/notify.log"
+  export MCPLAYER_TERMINAL_NOTIFIER_STUB="$MCPLAYER_DAEMON_TEST_TMP/terminal-notifier"
+  export MCPLAYER_OSASCRIPT_STUB="$MCPLAYER_DAEMON_TEST_TMP/osascript"
+
+  : > "$MCPLAYER_NOTIFY_LOG"
 
   write_stub_upstream
   write_mcp_client
   write_idle_client
   write_brainbar_stub
+  write_notify_stubs
   start_brainbar_stub
 }
 
@@ -226,6 +232,28 @@ EOF
   chmod +x "$MCPLAYER_MCP_CLIENT"
 }
 
+write_notify_stubs() {
+  cat > "$MCPLAYER_TERMINAL_NOTIFIER_STUB" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf "%s\n" "terminal-notifier" >> "$MCPLAYER_NOTIFY_LOG"
+for arg in "$@"; do
+  printf "%s\n" "$arg" >> "$MCPLAYER_NOTIFY_LOG"
+done
+EOF
+  chmod +x "$MCPLAYER_TERMINAL_NOTIFIER_STUB"
+
+  cat > "$MCPLAYER_OSASCRIPT_STUB" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf "%s\n" "osascript" >> "$MCPLAYER_NOTIFY_LOG"
+for arg in "$@"; do
+  printf "%s\n" "$arg" >> "$MCPLAYER_NOTIFY_LOG"
+done
+EOF
+  chmod +x "$MCPLAYER_OSASCRIPT_STUB"
+}
+
 write_idle_client() {
   cat > "$MCPLAYER_IDLE_CLIENT" <<'EOF'
 #!/usr/bin/env python3
@@ -371,6 +399,15 @@ write_config() {
       "env": {
         "MCPLAYER_UPSTREAM_LOG": "$MCPLAYER_UPSTREAM_LOG",
         "MCPLAYER_TOOL_NAME": "isolated"
+      }
+    },
+    "notify": {
+      "command": "bun",
+      "args": ["run", "$BATS_TEST_DIRNAME/../src/notify-server.ts"],
+      "env": {
+        "MCPLAYER_NOTIFY_TERMINAL_NOTIFIER_BIN": "$MCPLAYER_TERMINAL_NOTIFIER_STUB",
+        "MCPLAYER_NOTIFY_OSASCRIPT_BIN": "$MCPLAYER_OSASCRIPT_STUB",
+        "MCPLAYER_NOTIFY_LOG": "$MCPLAYER_NOTIFY_LOG"
       }
     }
   }
@@ -617,6 +654,29 @@ EOF
   [[ "$output" == *"mcplayer daemon status"* ]]
   [[ "$output" == *"\"pooled\""* ]]
   [[ "$output" == *"\"isolated\""* ]]
+}
+
+@test "daemon notify target routes tool calls through the notification backend" {
+  start_daemon
+
+  write_scenario "$MCPLAYER_DAEMON_TEST_TMP/notify.json" '{
+  "messages": [
+    {"send": {"jsonrpc": "2.0", "id": 50, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "notify-client", "version": "1.0.0"}}}},
+    {"send": {"jsonrpc": "2.0", "method": "notifications/initialized"}},
+    {"send": {"jsonrpc": "2.0", "id": 51, "method": "tools/call", "params": {"name": "notify", "arguments": {"title": "Build done", "body": "All green", "subtitle": "Phase 2", "sound": "default", "open": "https://example.com"}}}}
+  ],
+  "receive_count": 2,
+  "timeout_ms": 4000,
+  "idle_timeout_ms": 1500
+}'
+
+  python3 "$MCPLAYER_MCP_CLIENT" "$MCPLAYER_DAEMON_SOCKET" notify "$MCPLAYER_DAEMON_TEST_TMP/notify.json" "$MCPLAYER_CLIENT_A_OUT"
+
+  [ "$(json_value "$MCPLAYER_CLIENT_A_OUT" 'messages[1]["id"]')" = "51" ]
+  [ "$(json_value "$MCPLAYER_CLIENT_A_OUT" 'messages[1]["result"]["structuredContent"]["backend"]')" = "terminal-notifier" ]
+  grep -Fxq "terminal-notifier" "$MCPLAYER_NOTIFY_LOG"
+  grep -Fxq -- "-open" "$MCPLAYER_NOTIFY_LOG"
+  grep -Fxq "https://example.com" "$MCPLAYER_NOTIFY_LOG"
 }
 
 @test "SIGTERM reaps pooled children within five seconds" {

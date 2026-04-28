@@ -6,6 +6,7 @@
 set -euo pipefail
 
 VERSION="0.1.0"
+SCRIPT_DIR="${0:A:h}"
 
 typeset -ga PROC_IDS=()
 typeset -ga AGENT_IDS=()
@@ -41,6 +42,7 @@ SUBCOMMANDS:
   nuke        🚨 PANIC BUTTON: kill ALL MCP+agent procs. --yes required.
   up          Ensure brainbar daemon running + healthy
   down        Graceful shutdown: agents → MCPs → brainbar
+  notify      Send a native macOS notification
   daemon      LaunchAgent control: start|stop|status for the Phase 2 daemon
 
 OPTIONS:
@@ -55,6 +57,7 @@ EXAMPLES:
   mcplayer clean              # dry-run, shows orphans
   mcplayer clean --yes        # actually kills
   mcplayer nuke --yes         # kill everything except BrainBar
+  mcplayer notify --title "Build done" --body "All green"
   mcplayer daemon status
 EOF
 }
@@ -498,6 +501,17 @@ cmd_down() {
   fi
 }
 
+cmd_notify() {
+  local backend_path="$SCRIPT_DIR/mcplayer-notify-backend"
+
+  if [[ ! -x "$backend_path" ]]; then
+    echo "notify backend missing or not executable: $backend_path" >&2
+    return 1
+  fi
+
+  "$backend_path" "$@"
+}
+
 daemon_label() {
   echo "${MCPLAYER_DAEMON_LABEL:-com.mcplayer.multiplexer}"
 }
@@ -593,6 +607,9 @@ case "$cmd" in
     ;;
   down)
     cmd_down "${@:2}"
+    ;;
+  notify)
+    cmd_notify "${@:2}"
     ;;
   daemon)
     daemon_cmd="${2:-}"

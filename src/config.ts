@@ -72,6 +72,14 @@ function defaultServers(): Record<string, ServerConfig> {
       disabled: false,
       warm: true,
     },
+    notify: {
+      command: resolveCommand("bun"),
+      args: ["run", path.join(GITS_DIR, "mcplayer", "src", "notify-server.ts")],
+      env: {},
+      strictIsolation: false,
+      disabled: false,
+      warm: true,
+    },
     whatsapp: {
       command: resolveCommand("uv"),
       args: ["run", "--directory", path.join(GITS_DIR, "whatsapp-mcp", "whatsapp-mcp-server"), "main.py"],
