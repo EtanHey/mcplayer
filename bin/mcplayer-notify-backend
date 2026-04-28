@@ -148,7 +148,7 @@ send_with_terminal_notifier() {
   [[ -n "$GROUP_ID" ]] && args+=(-group "$GROUP_ID")
   [[ -n "$OPEN_URL" ]] && args+=(-open "$OPEN_URL")
 
-  "$notifier_path" "${args[@]}"
+  "$notifier_path" "${args[@]}" || return 1
   emit_success "terminal-notifier"
 }
 
@@ -174,7 +174,7 @@ send_with_osascript() {
 
   [[ -n "$GROUP_ID" ]] && unsupported="group"
 
-  "$osascript_path" -e "$script"
+  "$osascript_path" -e "$script" || return 1
   emit_success "osascript" "$unsupported"
 }
 

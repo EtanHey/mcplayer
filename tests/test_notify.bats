@@ -85,3 +85,41 @@ teardown() {
 
   [ "$status" -eq 1 ]
 }
+
+@test "mcplayer notify falls back to osascript when terminal-notifier execution fails" {
+  create_stub terminal-notifier '
+exit 1
+'
+
+  run env \
+    PATH="$MCPLAYER_TEST_BIN:$PATH" \
+    MCPLAYER_NOTIFY_TERMINAL_NOTIFIER_BIN="$MCPLAYER_TEST_BIN/terminal-notifier" \
+    MCPLAYER_NOTIFY_OSASCRIPT_BIN="$MCPLAYER_TEST_BIN/osascript" \
+    "$BATS_TEST_DIRNAME/../bin/mcplayer" \
+    notify \
+    --title "Retry fallback" \
+    --body "Use osascript"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"backend=osascript"* ]]
+  [[ "$output" != *"backend=terminal-notifier"* ]]
+  grep -Fxq "osascript" "$MCPLAYER_NOTIFY_LOG"
+}
+
+@test "mcplayer notify reports failure when osascript execution fails" {
+  create_stub osascript '
+exit 1
+'
+
+  run env \
+    PATH="$MCPLAYER_TEST_BIN:$PATH" \
+    MCPLAYER_NOTIFY_TERMINAL_NOTIFIER_BIN="$MCPLAYER_TEST_TMP/missing-terminal-notifier" \
+    MCPLAYER_NOTIFY_OSASCRIPT_BIN="$MCPLAYER_TEST_BIN/osascript" \
+    "$BATS_TEST_DIRNAME/../bin/mcplayer" \
+    notify \
+    --title "Broken fallback" \
+    --body "Do not claim delivery"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"delivered=1"* ]]
+}
