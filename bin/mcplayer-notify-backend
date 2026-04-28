@@ -1,0 +1,196 @@
+#!/usr/bin/env zsh
+
+set -euo pipefail
+
+typeset -g TITLE=""
+typeset -g BODY=""
+typeset -g SUBTITLE=""
+typeset -g PRIORITY="default"
+typeset -g SOUND=""
+typeset -g OPEN_URL=""
+typeset -g GROUP_ID=""
+
+usage() {
+  cat <<'EOF'
+Usage: mcplayer-notify-backend --title TITLE --body BODY [options]
+
+Options:
+  --title VALUE       Notification title (required)
+  --body VALUE        Notification body (required)
+  --subtitle VALUE    Notification subtitle
+  --priority VALUE    min|low|default|high|urgent (default: default)
+  --sound VALUE       Explicit sound name
+  --open URL          Open URL when notification is clicked (terminal-notifier only)
+  --group ID          Replace prior notification group (terminal-notifier only)
+  --help              Show this help
+EOF
+}
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+
+resolve_binary() {
+  local override="${1:-}"
+  local fallback="${2:-}"
+
+  if [[ -n "$override" ]]; then
+    if [[ -x "$override" ]]; then
+      echo "$override"
+      return 0
+    fi
+    return 1
+  fi
+
+  whence -p "$fallback" 2>/dev/null || return 1
+}
+
+applescript_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  echo "$value"
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)
+        [[ $# -ge 2 ]] || fail "--title requires a value"
+        TITLE="$2"
+        shift 2
+        ;;
+      --body)
+        [[ $# -ge 2 ]] || fail "--body requires a value"
+        BODY="$2"
+        shift 2
+        ;;
+      --subtitle)
+        [[ $# -ge 2 ]] || fail "--subtitle requires a value"
+        SUBTITLE="$2"
+        shift 2
+        ;;
+      --priority)
+        [[ $# -ge 2 ]] || fail "--priority requires a value"
+        PRIORITY="$2"
+        shift 2
+        ;;
+      --sound)
+        [[ $# -ge 2 ]] || fail "--sound requires a value"
+        SOUND="$2"
+        shift 2
+        ;;
+      --open)
+        [[ $# -ge 2 ]] || fail "--open requires a value"
+        OPEN_URL="$2"
+        shift 2
+        ;;
+      --group)
+        [[ $# -ge 2 ]] || fail "--group requires a value"
+        GROUP_ID="$2"
+        shift 2
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "Unknown option: $1"
+        ;;
+    esac
+  done
+}
+
+validate_args() {
+  [[ -n "$TITLE" ]] || fail "--title is required"
+  [[ -n "$BODY" ]] || fail "--body is required"
+
+  case "$PRIORITY" in
+    min|low|default|high|urgent)
+      ;;
+    *)
+      fail "Unsupported priority: $PRIORITY"
+      ;;
+  esac
+
+  if [[ -z "$SOUND" && ( "$PRIORITY" == "high" || "$PRIORITY" == "urgent" ) ]]; then
+    SOUND="default"
+  fi
+}
+
+emit_success() {
+  local backend="$1"
+  local unsupported="${2:-}"
+
+  echo "backend=$backend"
+  echo "delivered=1"
+  if [[ -n "$unsupported" ]]; then
+    echo "unsupported=$unsupported"
+  fi
+}
+
+send_with_terminal_notifier() {
+  local notifier_path
+  local -a args
+
+  notifier_path="$(resolve_binary "${MCPLAYER_NOTIFY_TERMINAL_NOTIFIER_BIN:-}" "terminal-notifier")" \
+    || return 1
+
+  args=(
+    -title "$TITLE"
+    -message "$BODY"
+  )
+
+  [[ -n "$SUBTITLE" ]] && args+=(-subtitle "$SUBTITLE")
+  [[ -n "$SOUND" ]] && args+=(-sound "$SOUND")
+  [[ -n "$GROUP_ID" ]] && args+=(-group "$GROUP_ID")
+  [[ -n "$OPEN_URL" ]] && args+=(-open "$OPEN_URL")
+
+  "$notifier_path" "${args[@]}"
+  emit_success "terminal-notifier"
+}
+
+send_with_osascript() {
+  local osascript_path
+  local script
+  local escaped_body escaped_title escaped_subtitle escaped_sound
+  local unsupported=""
+
+  osascript_path="$(resolve_binary "${MCPLAYER_NOTIFY_OSASCRIPT_BIN:-}" "osascript")" \
+    || return 1
+
+  [[ -z "$OPEN_URL" ]] || fail "click actions require terminal-notifier when only osascript is available"
+
+  escaped_body="$(applescript_escape "$BODY")"
+  escaped_title="$(applescript_escape "$TITLE")"
+  escaped_subtitle="$(applescript_escape "$SUBTITLE")"
+  escaped_sound="$(applescript_escape "$SOUND")"
+
+  script="display notification \"$escaped_body\" with title \"$escaped_title\""
+  [[ -n "$SUBTITLE" ]] && script+=" subtitle \"$escaped_subtitle\""
+  [[ -n "$SOUND" ]] && script+=" sound name \"$escaped_sound\""
+
+  [[ -n "$GROUP_ID" ]] && unsupported="group"
+
+  "$osascript_path" -e "$script"
+  emit_success "osascript" "$unsupported"
+}
+
+main() {
+  parse_args "$@"
+  validate_args
+
+  if send_with_terminal_notifier; then
+    return 0
+  fi
+
+  if send_with_osascript; then
+    return 0
+  fi
+
+  fail "no notification backend available: terminal-notifier and osascript were both unavailable"
+}
+
+main "$@"
