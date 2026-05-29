@@ -164,7 +164,6 @@ export class DurableQueue {
           },
           Buffer.byteLength(encodeLine(entry), "utf8"),
         );
-        state.nextOffset = Math.max(state.nextOffset, entry.offset + 1);
       } else if (isValidAckEntry(entry)) {
         const state = this.#state(entry.channel);
         this.#removeRecord(state, entry.message_id);

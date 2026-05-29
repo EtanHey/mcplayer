@@ -14,7 +14,7 @@ hang on engine startup and never reconnect by hand — you fix/wake the **engine
 
 ## Wire
 
-- **Transport:** Unix Domain Socket. Default path `/tmp/mcplayer.sock` (clients read it from
+- **Transport:** Unix Domain Socket. Default path `/tmp/mcplayer-bus.sock` (clients read it from
   config/env `MCPLAYER_SOCKET`, never hardcode).
 - **Framing:** NDJSON — exactly one JSON value per line, messages separated by `\n`. Slice on `\n`.
 - **RPC:** JSON-RPC 2.0, strict. A message **with** `id` is a Request and receives exactly one
