@@ -50,20 +50,29 @@ To run the regression gate before every push, configure Git hooks once:
 git config core.hooksPath .githooks
 ```
 
-Phase 2 adds the LaunchAgent-backed daemon lifecycle for mcplayer. Install it with:
+The durable bus runs as an always-on LaunchAgent (`com.mcplayer.bus` →
+`bin/mcplayer-server` on `/tmp/mcplayer-bus.sock`). Install it with:
 
 ```bash
-./scripts/install-launchagent.sh
+./scripts/install-bus-launchagent.sh
 ```
 
-The script installs `launchd/com.mcplayer.multiplexer.plist` into `~/Library/LaunchAgents`,
-substitutes `{{USER_HOME}}` in the plist template, and boots the service in the GUI user launchd domain.
+The script installs `launchd/com.mcplayer.bus.plist` into `~/Library/LaunchAgents`,
+substitutes `{{USER_HOME}}` / `{{REPO_ROOT}}` in the plist template, and boots the
+service in the GUI user launchd domain (auto-start at login, restart-on-crash). See
+[docs/DAEMON.md](docs/DAEMON.md) for status/busy semantics and how to stack an engine.
 
-To remove the LaunchAgent:
+To remove the LaunchAgent (the durable WAL is left intact):
 
 ```bash
-./scripts/uninstall-launchagent.sh
+./scripts/uninstall-bus-launchagent.sh
 ```
+
+> The legacy Phase-2 multiplexer broker daemon (`com.mcplayer.multiplexer` →
+> `src/index.ts` on `/tmp/mcplayer.sock`) was **retired** once the durable bus
+> subsumed it (no live consumers). The broker code remains in `src/` pending the
+> Phase-3 unified-proxy decision; only its always-on LaunchAgent deployment was
+> removed.
 
 Regression load tests require k6 for the fan-out timeout path:
 
