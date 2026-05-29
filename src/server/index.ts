@@ -10,6 +10,10 @@ import {
   validateParams,
 } from "../protocol";
 import { DurableQueue, WalFullError, type WalRecord } from "../wal";
+import {
+  EngineSupervisor,
+  type EngineStatus,
+} from "./engine";
 
 type BunSocket = any;
 type JsonRpcId = string | number | null;
@@ -43,6 +47,7 @@ export interface McplayerServerOptions {
   walPath?: string;
   maxBytesPerChannel?: number;
   maxRecordsPerChannel?: number;
+  engine?: EngineSupervisor;
 }
 
 export class McplayerServer {
@@ -50,10 +55,12 @@ export class McplayerServer {
   readonly #walPath: string;
   readonly #maxBytesPerChannel?: number;
   readonly #maxRecordsPerChannel?: number;
+  readonly #engine?: EngineSupervisor;
   readonly #sessionsByClientId = new Map<string, string>();
   readonly #clients = new Map<BunSocket, ClientConnection>();
   readonly #subscriptions = new Map<string, Subscription>();
   readonly #engineSince = new Date().toISOString();
+  #unsubscribeEngine?: () => void;
   #server: any;
   #queue?: DurableQueue;
   #queueOperations: Promise<void> = Promise.resolve();
@@ -70,6 +77,7 @@ export class McplayerServer {
       join(tmpdir(), "mcplayer.queue.wal");
     this.#maxBytesPerChannel = opts.maxBytesPerChannel;
     this.#maxRecordsPerChannel = opts.maxRecordsPerChannel;
+    this.#engine = opts.engine;
   }
 
   get socketPath(): string {
@@ -89,6 +97,16 @@ export class McplayerServer {
       maxBytesPerChannel: this.#maxBytesPerChannel,
       maxRecordsPerChannel: this.#maxRecordsPerChannel,
     });
+    let previousEngineStatus = this.#engine?.state();
+    this.#unsubscribeEngine = this.#engine?.onStateChange((status) => {
+      const wasDelivering =
+        previousEngineStatus !== undefined &&
+        isDeliveringEngineState(previousEngineStatus);
+      const isDelivering = isDeliveringEngineState(status);
+      previousEngineStatus = status;
+      if (!wasDelivering && isDelivering) void this.#replaySubscriptions();
+    });
+    this.#engine?.start();
 
     this.#server = Bun.listen({
       unix: this.#socketPath,
@@ -130,6 +148,9 @@ export class McplayerServer {
       this.#subscriptions.clear();
 
       try {
+        this.#unsubscribeEngine?.();
+        this.#unsubscribeEngine = undefined;
+        this.#engine?.stop();
         this.#queue?.close();
       } catch (error) {
         shutdownError ??= error;
@@ -289,8 +310,10 @@ export class McplayerServer {
             typeof params.from_offset === "number" ? params.from_offset : 1;
           const records = this.#requireQueue().readFrom(channel, fromOffset);
           await this.#sendResult(client, request.id, { subscribed: true });
-          for (const record of records) {
-            await this.#sendMessageBestEffort(client, record);
+          if (!this.#engine || isDeliveringEngineState(this.#engine.state())) {
+            for (const record of records) {
+              await this.#sendMessageBestEffort(client, record);
+            }
           }
           if (client.closed) return;
 
@@ -313,11 +336,7 @@ export class McplayerServer {
       }
 
       case "mcplayer.status":
-        // This is engine health, not listener health. D2 has no attached engine yet.
-        await this.#sendResult(client, request.id, {
-          state: "not-up",
-          since: this.#engineSince,
-        });
+        await this.#sendResult(client, request.id, this.#engineStatus());
         return;
     }
   }
@@ -337,11 +356,36 @@ export class McplayerServer {
   }
 
   async #notifySubscribers(record: WalRecord): Promise<void> {
+    if (this.#engine && !isDeliveringEngineState(this.#engine.state())) return;
     for (const subscription of this.#subscriptions.values()) {
       if (subscription.channel !== record.channel) continue;
       if (record.offset < subscription.fromOffset) continue;
       await this.#sendMessageBestEffort(subscription.client, record);
     }
+  }
+
+  async #replaySubscriptions(): Promise<void> {
+    await this.#runQueueOperation(async () => {
+      if (!this.#queue) return;
+      if (this.#engine && !isDeliveringEngineState(this.#engine.state())) return;
+      for (const subscription of this.#subscriptions.values()) {
+        if (subscription.client.closed) continue;
+        for (const record of this.#queue.readFrom(
+          subscription.channel,
+          subscription.fromOffset,
+        )) {
+          await this.#sendMessageBestEffort(subscription.client, record);
+          if (subscription.client.closed) break;
+        }
+      }
+    });
+  }
+
+  #engineStatus(): EngineStatus {
+    return this.#engine?.state() ?? {
+      state: "not-up",
+      since: this.#engineSince,
+    };
   }
 
   async #sendMessageBestEffort(
@@ -396,6 +440,10 @@ export class McplayerServer {
     });
     return client.writes;
   }
+}
+
+function isDeliveringEngineState(status: EngineStatus): boolean {
+  return status.state === "up" || status.state === "busy";
 }
 
 function isKnownMethod(method: string): boolean {

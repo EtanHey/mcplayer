@@ -5,6 +5,7 @@ import { join } from "node:path";
 import net from "node:net";
 import { encodeLine, NdjsonDecoder } from "../../src/protocol";
 import { McplayerServer } from "../../src/server";
+import { EngineSupervisor } from "../../src/server/engine";
 
 type JsonRpcMessage = Record<string, unknown>;
 
@@ -30,7 +31,7 @@ async function startServer(root: string, opts: { maxRecordsPerChannel?: number }
 
 function connectClient(socketPath: string): Promise<{
   request: (method: string, params: Record<string, unknown>) => Promise<JsonRpcMessage>;
-  next: () => Promise<JsonRpcMessage>;
+  next: (timeoutMs?: number) => Promise<JsonRpcMessage>;
   close: () => void;
 }> {
   const socket = net.createConnection(socketPath);
@@ -58,12 +59,26 @@ function connectClient(socketPath: string): Promise<{
     }
   });
 
-  const next = () =>
-    new Promise<JsonRpcMessage>((resolve) => {
-      const existing = inbox.shift();
-      if (existing) resolve(existing);
-      else waiters.push(resolve);
+  const next = (timeoutMs?: number) => {
+    const existing = inbox.shift();
+    if (existing) return Promise.resolve(existing);
+    let resolveWaiter: (message: JsonRpcMessage) => void = () => {};
+    const notification = new Promise<JsonRpcMessage>((resolve) => {
+      resolveWaiter = resolve;
+      waiters.push(resolve);
     });
+    if (timeoutMs === undefined) return notification;
+    return Promise.race([
+      notification,
+      new Promise<JsonRpcMessage>((_, reject) =>
+        setTimeout(() => {
+          const index = waiters.indexOf(resolveWaiter);
+          if (index !== -1) waiters.splice(index, 1);
+          reject(new Error("timed out waiting for notification"));
+        }, timeoutMs),
+      ),
+    ]);
+  };
 
   return new Promise((resolve, reject) => {
     socket.once("error", reject);
@@ -261,5 +276,183 @@ describe("mcplayer D2 UDS server", () => {
     const status = await client.request("mcplayer.status", {});
     expect(status.result).toMatchObject({ state: "not-up" });
     client.close();
+  });
+
+  test("attached engine drives status and gates subscriber replay until recovery", async () => {
+    const root = tempRoot();
+    const engine = new EngineSupervisor({ initialState: "building" });
+    const server = new McplayerServer({
+      socketPath: join(root, "mcplayer.sock"),
+      walPath: join(root, "queue.wal"),
+      engine,
+    });
+    await server.start();
+    servers.push(server);
+
+    const client = await connectClient(server.socketPath);
+    expect((await client.request("mcplayer.status", {})).result).toMatchObject({
+      state: "building",
+    });
+
+    engine.markUp();
+    expect((await client.request("mcplayer.status", {})).result).toMatchObject({
+      state: "up",
+    });
+
+    const subscribe = await client.request("mcplayer.subscribe", {
+      channel: "engine-reset",
+      from_offset: 1,
+    });
+    expect(subscribe.result).toEqual({ subscribed: true });
+
+    engine.markDown();
+    expect((await client.request("mcplayer.status", {})).result).toMatchObject({
+      state: "not-up",
+    });
+
+    const publish = await client.request("mcplayer.publish", {
+      channel: "engine-reset",
+      message_id: "during-down-1",
+      payload: { order: 1 },
+    });
+    expect(publish.result).toEqual({ enqueued: true, offset: 1 });
+
+    engine.markUp();
+    const replay = await client.next();
+    expect(replay).toMatchObject({
+      method: "mcplayer.message",
+      params: {
+        channel: "engine-reset",
+        message_id: "during-down-1",
+        offset: 1,
+      },
+    });
+
+    client.close();
+  });
+
+  test("attached engine defers subscribe replay while down and replays on recovery", async () => {
+    const root = tempRoot();
+    const engine = new EngineSupervisor({ initialState: "not-up" });
+    const server = new McplayerServer({
+      socketPath: join(root, "mcplayer.sock"),
+      walPath: join(root, "queue.wal"),
+      engine,
+    });
+    await server.start();
+    servers.push(server);
+
+    const producer = await connectClient(server.socketPath);
+    const subscriber = await connectClient(server.socketPath);
+    await producer.request("mcplayer.publish", {
+      channel: "deferred-replay",
+      message_id: "m1",
+      payload: { order: 1 },
+    });
+
+    const subscribe = await subscriber.request("mcplayer.subscribe", {
+      channel: "deferred-replay",
+      from_offset: 1,
+    });
+    expect(subscribe.result).toEqual({ subscribed: true });
+
+    await expect(subscriber.next(25)).rejects.toThrow(
+      "timed out waiting for notification",
+    );
+
+    engine.markUp();
+    const replay = await subscriber.next();
+    expect(replay).toMatchObject({
+      method: "mcplayer.message",
+      params: {
+        channel: "deferred-replay",
+        message_id: "m1",
+        offset: 1,
+      },
+    });
+
+    producer.close();
+    subscriber.close();
+  });
+
+  test("attached engine replays only when transitioning from non-delivering to delivering", async () => {
+    const root = tempRoot();
+    const engine = new EngineSupervisor({ initialState: "not-up" });
+    const server = new McplayerServer({
+      socketPath: join(root, "mcplayer.sock"),
+      walPath: join(root, "queue.wal"),
+      engine,
+    });
+    await server.start();
+    servers.push(server);
+
+    const producer = await connectClient(server.socketPath);
+    const subscriber = await connectClient(server.socketPath);
+    await producer.request("mcplayer.publish", {
+      channel: "transition-replay",
+      message_id: "m1",
+      payload: { order: 1 },
+    });
+
+    expect(
+      (
+        await subscriber.request("mcplayer.subscribe", {
+          channel: "transition-replay",
+          from_offset: 1,
+        })
+      ).result,
+    ).toEqual({ subscribed: true });
+
+    engine.markUp();
+    expect((await subscriber.next()).params).toMatchObject({
+      message_id: "m1",
+      offset: 1,
+    });
+
+    engine.markBusy();
+    await expect(subscriber.next(25)).rejects.toThrow(
+      "timed out waiting for notification",
+    );
+
+    producer.close();
+    subscriber.close();
+  });
+
+  test("attached engine skips queued recovery replay if engine drops before the replay runs", async () => {
+    const root = tempRoot();
+    const engine = new EngineSupervisor({ initialState: "not-up" });
+    const server = new McplayerServer({
+      socketPath: join(root, "mcplayer.sock"),
+      walPath: join(root, "queue.wal"),
+      engine,
+    });
+    await server.start();
+    servers.push(server);
+
+    const producer = await connectClient(server.socketPath);
+    const subscriber = await connectClient(server.socketPath);
+    await producer.request("mcplayer.publish", {
+      channel: "queued-replay",
+      message_id: "m1",
+      payload: { order: 1 },
+    });
+    expect(
+      (
+        await subscriber.request("mcplayer.subscribe", {
+          channel: "queued-replay",
+          from_offset: 1,
+        })
+      ).result,
+    ).toEqual({ subscribed: true });
+
+    engine.markUp();
+    engine.markDown();
+
+    await expect(subscriber.next(25)).rejects.toThrow(
+      "timed out waiting for notification",
+    );
+
+    producer.close();
+    subscriber.close();
   });
 });
