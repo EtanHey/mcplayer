@@ -32,6 +32,18 @@ describe("NDJSON framing", () => {
     const d = new NdjsonDecoder();
     expect(d.push(Buffer.from('\n{"x":1}\n\n'))).toEqual([{ x: 1 }]);
   });
+
+  test("decoder throws on invalid JSON", () => {
+    const d = new NdjsonDecoder();
+    expect(() => d.push(Buffer.from('{"invalid\n'))).toThrow();
+  });
+
+  test("decoder throws on malformed JSON with helpful context", () => {
+    const d = new NdjsonDecoder();
+    expect(() =>
+      d.push(Buffer.from('{"unclosed": "string\n')),
+    ).toThrow();
+  });
 });
 
 describe("JSON-RPC 2.0 strict classification", () => {
@@ -65,6 +77,17 @@ describe("JSON-RPC 2.0 strict classification", () => {
   test("missing jsonrpc:'2.0' => invalid", () => {
     expect(classify({ id: 1, method: "x" })).toBe("invalid");
     expect(classify({ jsonrpc: "1.0", id: 1, method: "x" })).toBe("invalid");
+  });
+
+  test("response with both result and error => invalid (JSON-RPC 2.0 spec)", () => {
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {},
+        error: { code: -32603, message: "x" },
+      }),
+    ).toBe("invalid");
   });
 });
 

@@ -63,7 +63,10 @@ export function classify(msg: unknown): MessageKind {
 
   if (hasMethod && hasId) return "request";
   if (hasMethod && !hasId) return "notification";
-  if (hasId && (hasResult || hasError)) return "response";
+  if (hasId && (hasResult || hasError)) {
+    if (hasResult && hasError) return "invalid";
+    return "response";
+  }
   return "invalid";
 }
 
