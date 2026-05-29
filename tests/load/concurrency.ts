@@ -23,6 +23,7 @@ const MESSAGES_PER_PUBLISHER = 100;
 const BACKPRESSURE_CAP = MESSAGES_PER_PUBLISHER;
 const BACKPRESSURE_NACK_ATTEMPTS = 20;
 const WALL_CLOCK_LIMIT_MS = 20_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 
 const children: ChildProcessWithoutNullStreams[] = [];
 const roots: string[] = [];
@@ -36,6 +37,7 @@ class BusClient {
   #waiters: Array<() => void> = [];
   #nextId = 1;
   #closed = false;
+  #error: Error | undefined;
 
   private constructor(socketPath: string, socket: net.Socket) {
     this.socketPath = socketPath;
@@ -45,7 +47,8 @@ class BusClient {
       this.#closed = true;
       this.#wake();
     });
-    this.#socket.on("error", () => {
+    this.#socket.on("error", (error) => {
+      this.#error = error;
       this.#closed = true;
       this.#wake();
     });
@@ -65,7 +68,7 @@ class BusClient {
   async request(
     method: string,
     params: Record<string, unknown>,
-    timeoutMs = 5_000,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Promise<JsonRpcMessage> {
     const id = this.#nextId++;
     const response = new Promise<JsonRpcMessage>((resolve, reject) => {
@@ -89,6 +92,7 @@ class BusClient {
     const deadline = Date.now() + timeoutMs;
     while (this.#notifications.length < count) {
       if (this.#closed) {
+        if (this.#error) throw this.#error;
         throw new Error(
           `socket closed with ${this.#notifications.length}/${count} notifications`,
         );
@@ -104,8 +108,16 @@ class BusClient {
     return this.#notifications.splice(0, count);
   }
 
-  close(): void {
-    this.#socket.end();
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, DEFAULT_REQUEST_TIMEOUT_MS);
+      this.#socket.once("close", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      this.#socket.end();
+    });
   }
 
   #handleData(chunk: Buffer): void {
@@ -207,6 +219,7 @@ test(
           WALL_CLOCK_LIMIT_MS,
         );
         let previousOffset = 0;
+        const seenOffsets = new Set<number>();
         for (const message of messages) {
           const params = decodeMessage(message);
           const expectedMessageId = messageId(publisherIndex, params.payload.sequence);
@@ -224,7 +237,14 @@ test(
           if (params.offset !== params.payload.sequence) {
             throw new Error(`offset/sequence correlation mismatch ${params.message_id}`);
           }
-          if (params.offset <= previousOffset) reordered += 1;
+          if (seenOffsets.has(params.offset)) {
+            throw new Error(`duplicate offset ${params.offset} for ${params.message_id}`);
+          }
+          if (params.offset === 1 && previousOffset !== 0) {
+            throw new Error(`offset restarted at ${params.message_id}`);
+          }
+          if (params.offset < previousOffset) reordered += 1;
+          seenOffsets.add(params.offset);
           previousOffset = params.offset;
           latencies.push(Date.now() - params.payload.sent_at_ms);
           received += 1;
@@ -282,6 +302,7 @@ test(
         channel: "backpressure",
         message_id: `bp-${sequence}`,
         payload: { publisher: 999, sequence, sent_at_ms: Date.now() },
+        durable: true,
       });
       expect(response.error).toBeUndefined();
       sent += 1;
@@ -296,6 +317,7 @@ test(
         channel: "backpressure",
         message_id: `bp-${sequence}`,
         payload: { publisher: 999, sequence, sent_at_ms: Date.now() },
+        durable: true,
       });
       expect((response.error as JsonRpcError | undefined)?.code).toBe(-32004);
       nacks += 1;
@@ -324,7 +346,12 @@ test(
     const recovery = await backpressurePublisher.request("mcplayer.publish", {
       channel: "backpressure",
       message_id: "bp-recovery",
-      payload: { publisher: 999, sequence: BACKPRESSURE_CAP + 1, sent_at_ms: recoverySentAt },
+      payload: {
+        publisher: 999,
+        sequence: BACKPRESSURE_CAP + 1,
+        sent_at_ms: recoverySentAt,
+      },
+      durable: true,
     });
     expect(recovery.error).toBeUndefined();
     sent += 1;
@@ -345,9 +372,14 @@ test(
     expect(nacks).toBe(BACKPRESSURE_NACK_ATTEMPTS);
     expect(wallMs).toBeLessThan(WALL_CLOCK_LIMIT_MS);
 
-    for (const client of [...subscribers, ...publishers, backpressureSubscriber, backpressurePublisher]) {
-      client.close();
-    }
+    await Promise.all(
+      [
+        ...subscribers,
+        ...publishers,
+        backpressureSubscriber,
+        backpressurePublisher,
+      ].map((client) => client.close()),
+    );
 
     const p50Ms = percentile(latencies, 50);
     const p99Ms = percentile(latencies, 99);
@@ -383,7 +415,7 @@ async function startServer(
 
   await waitFor(
     () => stdout.includes("MCPLAYER_SERVER_LISTENING"),
-    5_000,
+    DEFAULT_REQUEST_TIMEOUT_MS,
     () => `mcplayer-server did not start. stdout=${stdout} stderr=${stderr}`,
   );
   return child;
