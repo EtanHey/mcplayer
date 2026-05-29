@@ -1,8 +1,13 @@
 #!/usr/bin/env bun
 
 import { McplayerServer } from ".";
+import {
+  EngineSupervisor,
+  createHeartbeatFileHealthProbe,
+} from "./engine";
 
 const server = new McplayerServer({
+  engine: createEnvEngineSupervisor(),
   maxBytesPerChannel: optionalNumber(process.env.MCPLAYER_WAL_MAX_BYTES_PER_CHANNEL),
   maxRecordsPerChannel: optionalNumber(
     process.env.MCPLAYER_WAL_MAX_RECORDS_PER_CHANNEL,
@@ -39,4 +44,20 @@ function optionalNumber(value: string | undefined): number | undefined {
     throw new Error(`expected numeric env value, got: ${value}`);
   }
   return parsed;
+}
+
+function createEnvEngineSupervisor(): EngineSupervisor | undefined {
+  const heartbeatPath = process.env.MCPLAYER_ENGINE_HEARTBEAT_FILE;
+  if (!heartbeatPath) return undefined;
+
+  return new EngineSupervisor({
+    initialState: "building",
+    probeIntervalMs:
+      optionalNumber(process.env.MCPLAYER_ENGINE_PROBE_INTERVAL_MS) ?? 250,
+    healthProbe: createHeartbeatFileHealthProbe({
+      path: heartbeatPath,
+      staleMs:
+        optionalNumber(process.env.MCPLAYER_ENGINE_HEARTBEAT_STALE_MS) ?? 1000,
+    }),
+  });
 }
