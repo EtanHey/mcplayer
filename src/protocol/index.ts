@@ -16,21 +16,34 @@ export function encodeLine(value: unknown): string {
  * Incremental NDJSON line decoder. Feed arbitrary chunks; get back the complete
  * JSON values whose terminating "\n" has arrived. Partial trailing lines are
  * buffered until their newline shows up. Blank lines are skipped.
+ *
+ * Buffers RAW BYTES and decodes only complete lines. The line separator is the
+ * 0x0A byte, which can never appear inside a multi-byte UTF-8 sequence (all
+ * continuation/lead bytes are >= 0x80), so a multi-byte character split across
+ * chunk boundaries — expected over a UDS — is reassembled intact rather than
+ * being corrupted to U+FFFD by a premature per-chunk decode.
  */
 export class NdjsonDecoder {
-  #buffer = "";
+  #buffer: Buffer = Buffer.alloc(0);
 
   push(chunk: Buffer | Uint8Array | string): unknown[] {
-    this.#buffer +=
-      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    const incoming =
+      typeof chunk === "string"
+        ? Buffer.from(chunk, "utf8")
+        : Buffer.from(chunk);
+    this.#buffer =
+      this.#buffer.length === 0
+        ? incoming
+        : Buffer.concat([this.#buffer, incoming]);
 
     const out: unknown[] = [];
-    let newlineIdx: number;
-    while ((newlineIdx = this.#buffer.indexOf("\n")) !== -1) {
-      const line = this.#buffer.slice(0, newlineIdx);
-      this.#buffer = this.#buffer.slice(newlineIdx + 1);
-      if (line.trim().length === 0) continue; // skip blank lines
-      out.push(JSON.parse(line));
+    let nl: number;
+    while ((nl = this.#buffer.indexOf(0x0a)) !== -1) {
+      const lineBytes = this.#buffer.subarray(0, nl); // one complete line, raw
+      this.#buffer = this.#buffer.subarray(nl + 1);
+      const text = lineBytes.toString("utf8").trim(); // decode only when complete
+      if (text.length === 0) continue; // skip blank lines
+      out.push(JSON.parse(text));
     }
     return out;
   }
@@ -137,7 +150,12 @@ export function validateParams(
   method: string,
   params: unknown,
 ): ValidationResult {
-  const v = VALIDATORS[method];
+  // hasOwnProperty guard: a bare VALIDATORS[method] walks the prototype chain, so
+  // "constructor"/"toString"/etc. would resolve to inherited Object.prototype
+  // methods and bypass this unknown-method rejection.
+  const v = Object.prototype.hasOwnProperty.call(VALIDATORS, method)
+    ? VALIDATORS[method]
+    : undefined;
   if (!v) return bad(`unknown method: ${method}`);
   if (!isObject(params)) return bad("params must be an object");
   return v(params);

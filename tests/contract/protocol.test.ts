@@ -165,4 +165,36 @@ describe("method param validation (the 5 methods)", () => {
   test("unknown method => not ok", () => {
     expect(validateParams("mcplayer.nope", {}).ok).toBe(false);
   });
+
+  // Cursor Bugbot (medium): prototype-chain names must NOT resolve to inherited
+  // Object.prototype methods and bypass the unknown-method guard.
+  test("Object.prototype method names are rejected (no prototype-chain bypass)", () => {
+    expect(validateParams("constructor", { client_id: "x" }).ok).toBe(false);
+    expect(validateParams("toString", {}).ok).toBe(false);
+    expect(validateParams("valueOf", {}).ok).toBe(false);
+    expect(validateParams("hasOwnProperty", {}).ok).toBe(false);
+  });
+});
+
+describe("NDJSON multi-byte safety (Cursor Bugbot HIGH)", () => {
+  test("a multi-byte UTF-8 char split across chunk boundaries is not corrupted", () => {
+    // "😀" = F0 9F 98 80. Split the buffer mid-emoji so the first chunk ends on
+    // an incomplete UTF-8 sequence — the decoder must not emit U+FFFD.
+    const buf = Buffer.from('{"x":"😀"}\n', "utf8");
+    const k = buf.length - 4; // lands inside the 4-byte emoji
+    const d = new NdjsonDecoder();
+    expect(d.push(buf.subarray(0, k))).toEqual([]);
+    expect(d.push(buf.subarray(k))).toEqual([{ x: "😀" }]);
+  });
+
+  test("CJK split across three chunks reassembles correctly", () => {
+    const buf = Buffer.from('{"msg":"你好世界"}\n', "utf8");
+    const d = new NdjsonDecoder();
+    const a = buf.subarray(0, 9);
+    const b = buf.subarray(9, 14);
+    const c = buf.subarray(14);
+    expect(d.push(a)).toEqual([]);
+    d.push(b);
+    expect(d.push(c)).toEqual([{ msg: "你好世界" }]);
+  });
 });
