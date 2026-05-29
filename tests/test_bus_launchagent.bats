@@ -111,6 +111,21 @@ teardown() {
   [ ! -f "$plist_target" ]
 }
 
+@test "bus install substitutes the real repo root (no hardcoded path, no leftover placeholders)" {
+  run env HOME="$MCPLAYER_TEST_TMP" PATH="$MCPLAYER_TEST_BIN:$PATH" "$INSTALL_SCRIPT"
+  [ "$status" -eq 0 ]
+  local plist_target repo_root
+  plist_target="$(launchagent_path)"
+  repo_root="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+
+  # No template placeholders survive into the installed plist.
+  ! grep -q "{{" "$plist_target"
+  # The binary path points at THIS checkout's bin/mcplayer-server.
+  run plutil -extract ProgramArguments.1 raw "$plist_target"
+  [ "$status" -eq 0 ]
+  [ "$output" = "${repo_root}/bin/mcplayer-server" ]
+}
+
 @test "bus install creates the durable WAL directory" {
   run env HOME="$MCPLAYER_TEST_TMP" PATH="$MCPLAYER_TEST_BIN:$PATH" "$INSTALL_SCRIPT"
   [ "$status" -eq 0 ]

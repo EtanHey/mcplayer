@@ -9,7 +9,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>{{USER_HOME}}/.bun/bin/bun</string>
-    <string>{{USER_HOME}}/Gits/mcplayer/bin/mcplayer-server</string>
+    <string>{{REPO_ROOT}}/bin/mcplayer-server</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

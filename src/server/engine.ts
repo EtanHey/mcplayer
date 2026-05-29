@@ -116,23 +116,26 @@ export function createHeartbeatFileHealthProbe(
       return false;
     }
     if (!fresh) return false;
-    // A fresh heartbeat that carries a recognized engine-state token lets the
-    // engine declare "busy"/"building"/"up"/"not-up" directly (e.g. signal
-    // backpressure so clients back off instead of hammering an overloaded
-    // engine). A tokenless heartbeat (a timestamp or empty) stays a pure
-    // freshness signal: fresh => true (up).
-    return readHeartbeatStateToken(opts.path) ?? true;
+    // The heartbeat passed the freshness gate; now read its content. A read
+    // failure here means the path vanished or became unreadable AFTER the stat
+    // (a TOCTOU race, e.g. the engine deleted the file) — treat that as not-up,
+    // never up. A fresh, readable heartbeat that carries a recognized
+    // engine-state token lets the engine declare "busy"/"building"/"up"/"not-up"
+    // directly (signal backpressure so clients back off instead of hammering an
+    // overloaded engine). Readable but tokenless content (a timestamp or empty)
+    // stays a pure freshness signal: fresh => true (up).
+    let content: string;
+    try {
+      content = readFileSync(opts.path, "utf8");
+    } catch {
+      return false;
+    }
+    return parseHeartbeatStateToken(content) ?? true;
   };
 }
 
-function readHeartbeatStateToken(path: string): EngineState | undefined {
-  let token: string;
-  try {
-    token =
-      readFileSync(path, "utf8").trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
-  } catch {
-    return undefined;
-  }
+function parseHeartbeatStateToken(content: string): EngineState | undefined {
+  const token = content.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
   switch (token) {
     case "up":
     case "busy":

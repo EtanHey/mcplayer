@@ -133,6 +133,22 @@ describe("EngineSupervisor", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  test("heartbeat file probe reports not-up when a fresh path is unreadable", () => {
+    // A directory is a fresh, stat-able path whose content cannot be read
+    // (readFileSync throws EISDIR) — the same shape as a TOCTOU race where the
+    // heartbeat vanishes/becomes unreadable after statSync succeeds. The probe
+    // must not coalesce that into "up".
+    const root = mkdtempSync(join(tmpdir(), "mcplayer-engine-unreadable-"));
+    const probe = createHeartbeatFileHealthProbe({
+      path: root,
+      staleMs: 60000,
+    });
+
+    expect(probe()).toBe(false);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
   test("engine supervisor surfaces a busy heartbeat as busy and recovers to up", async () => {
     const root = mkdtempSync(join(tmpdir(), "mcplayer-engine-busy-sup-"));
     const heartbeatPath = join(root, "heartbeat");

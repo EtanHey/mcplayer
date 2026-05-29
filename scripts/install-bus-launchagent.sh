@@ -25,7 +25,10 @@ mkdir -p "${TARGET_DIR}"
 mkdir -p "${HOME}/Library/Application Support/mcplayer"
 
 tmp_plist="$(mktemp)"
-sed "s|{{USER_HOME}}|${HOME}|g" "${SOURCE_PLIST}" > "${tmp_plist}"
+# Substitute both the home dir AND the actual repo root, so the LaunchAgent
+# points at this checkout's bin/mcplayer-server regardless of where the repo
+# lives (a clone elsewhere, or a worktree).
+sed "s|{{USER_HOME}}|${HOME}|g; s|{{REPO_ROOT}}|${REPO_ROOT}|g" "${SOURCE_PLIST}" > "${tmp_plist}"
 mv -f "${tmp_plist}" "${TARGET_PLIST}"
 
 launchctl bootout "${LAUNCH_DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true
