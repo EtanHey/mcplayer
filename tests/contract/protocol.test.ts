@@ -33,16 +33,21 @@ describe("NDJSON framing", () => {
     expect(d.push(Buffer.from('\n{"x":1}\n\n'))).toEqual([{ x: 1 }]);
   });
 
-  test("decoder throws on invalid JSON", () => {
+  // Malformed lines are RECORDED, not thrown: a persistent socket must not die
+  // on one corrupt frame, and a durable bus must not lose the valid frames
+  // parsed alongside it (Cursor Bugbot: mid-batch parse failure data loss).
+  test("decoder records a malformed line instead of throwing", () => {
     const d = new NdjsonDecoder();
-    expect(() => d.push(Buffer.from('{"invalid\n'))).toThrow();
+    expect(d.push(Buffer.from('{"invalid\n'))).toEqual([]);
+    expect(d.errors).toHaveLength(1);
+    expect(d.errors[0].line).toBe('{"invalid');
   });
 
-  test("decoder throws on malformed JSON with helpful context", () => {
+  test("a malformed line does not lose valid messages in the same batch", () => {
     const d = new NdjsonDecoder();
-    expect(() =>
-      d.push(Buffer.from('{"unclosed": "string\n')),
-    ).toThrow();
+    const out = d.push(Buffer.from('{"a":1}\n{bad\n{"b":2}\n'));
+    expect(out).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(d.errors).toHaveLength(1);
   });
 });
 

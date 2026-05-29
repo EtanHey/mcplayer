@@ -23,8 +23,21 @@ export function encodeLine(value: unknown): string {
  * chunk boundaries — expected over a UDS — is reassembled intact rather than
  * being corrupted to U+FFFD by a premature per-chunk decode.
  */
+export interface NdjsonParseError {
+  line: string;
+  error: string;
+}
+
 export class NdjsonDecoder {
   #buffer: Buffer = Buffer.alloc(0);
+  /**
+   * Malformed lines encountered (could not JSON.parse). Recorded rather than
+   * thrown: one corrupt frame must NOT kill a persistent socket nor discard the
+   * valid messages parsed alongside it in the same push() (a durable bus must
+   * not silently lose good frames because a different frame was bad). Callers
+   * that want fail-loud behavior inspect this after each push().
+   */
+  readonly errors: NdjsonParseError[] = [];
 
   push(chunk: Buffer | Uint8Array | string): unknown[] {
     const incoming =
@@ -43,7 +56,13 @@ export class NdjsonDecoder {
       this.#buffer = this.#buffer.subarray(nl + 1);
       const text = lineBytes.toString("utf8").trim(); // decode only when complete
       if (text.length === 0) continue; // skip blank lines
-      out.push(JSON.parse(text));
+      try {
+        out.push(JSON.parse(text));
+      } catch (e) {
+        // Record and continue — never lose the valid messages already in `out`,
+        // and never advance past or re-process this complete (but invalid) line.
+        this.errors.push({ line: text, error: (e as Error).message });
+      }
     }
     return out;
   }
