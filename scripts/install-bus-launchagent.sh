@@ -25,6 +25,7 @@ mkdir -p "${TARGET_DIR}"
 mkdir -p "${HOME}/Library/Application Support/mcplayer"
 
 tmp_plist="$(mktemp)"
+trap 'rm -f "${tmp_plist}"' EXIT
 # Substitute both the home dir AND the actual repo root, so the LaunchAgent
 # points at this checkout's bin/mcplayer-server regardless of where the repo
 # lives (a clone elsewhere, or a worktree).
