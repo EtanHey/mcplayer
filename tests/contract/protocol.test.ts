@@ -84,6 +84,19 @@ describe("JSON-RPC 2.0 strict classification", () => {
     expect(classify({ jsonrpc: "1.0", id: 1, method: "x" })).toBe("invalid");
   });
 
+  test("method + result/error => invalid (no request/response shape mixing)", () => {
+    expect(classify({ jsonrpc: "2.0", id: 1, method: "foo", result: {} })).toBe(
+      "invalid",
+    );
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        method: "foo",
+        error: { code: -32603, message: "x" },
+      }),
+    ).toBe("invalid");
+  });
+
   test("response with both result and error => invalid (JSON-RPC 2.0 spec)", () => {
     expect(
       classify({

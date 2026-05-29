@@ -93,6 +93,9 @@ export function classify(msg: unknown): MessageKind {
   const hasResult = "result" in msg;
   const hasError = "error" in msg;
 
+  // A method message carrying result/error mixes request/notification with
+  // response shape — illegal under strict JSON-RPC 2.0.
+  if (hasMethod && (hasResult || hasError)) return "invalid";
   if (hasMethod && hasId) return "request";
   if (hasMethod && !hasId) return "notification";
   if (hasId && (hasResult || hasError)) {
