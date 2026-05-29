@@ -45,3 +45,6 @@ jobs:
 
       - name: Run bats suite
         run: bats tests
+
+      - name: Run Bun contract tests
+        run: bun test tests/contract

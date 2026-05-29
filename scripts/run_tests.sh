@@ -116,6 +116,10 @@ if ! bun test ./tests/integration/test_fanout_timeout.ts; then
   ((EXIT_STATUS |= 4))
 fi
 
+if ! bun test ./tests/contract; then
+  ((EXIT_STATUS |= 8))
+fi
+
 rm -rf "$TEMP_BASE"
 
 echo "mcplayer run_tests.sh finished with exit status $EXIT_STATUS"
