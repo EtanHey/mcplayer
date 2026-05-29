@@ -259,7 +259,7 @@ export class McplayerServer {
           payload,
         );
         await this.#sendResult(client, request.id, { enqueued: true, offset });
-        await this.#notifySubscribers({
+        void this.#notifySubscribers({
           channel,
           message_id: messageId,
           payload,
@@ -277,7 +277,7 @@ export class McplayerServer {
         client.subscriptions.add(key);
         await this.#sendResult(client, request.id, { subscribed: true });
         for (const record of this.#requireQueue().readFrom(channel, fromOffset)) {
-          await this.#sendMessage(client, record);
+          await this.#sendMessageBestEffort(client, record);
         }
         return;
       }
@@ -310,7 +310,18 @@ export class McplayerServer {
     for (const subscription of this.#subscriptions.values()) {
       if (subscription.channel !== record.channel) continue;
       if (record.offset < subscription.fromOffset) continue;
-      await this.#sendMessage(subscription.client, record);
+      await this.#sendMessageBestEffort(subscription.client, record);
+    }
+  }
+
+  async #sendMessageBestEffort(
+    client: ClientConnection,
+    record: WalRecord,
+  ): Promise<void> {
+    try {
+      await this.#sendMessage(client, record);
+    } catch {
+      this.#handleClose(client.socket);
     }
   }
 
