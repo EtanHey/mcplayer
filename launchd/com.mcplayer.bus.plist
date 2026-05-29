@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mcplayer.bus</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{USER_HOME}}/.bun/bin/bun</string>
+    <string>{{REPO_ROOT}}/bin/mcplayer-server</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart on crash (any non-zero/signal exit), but stay down after a clean
+       `mcplayer down` / launchctl bootout (SIGTERM -> exit 0). -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <!-- Back off between respawns so a crash-loop can't hammer the machine. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/mcplayer-bus.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/mcplayer-bus.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{USER_HOME}}/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- Stable client-facing socket every layer stacks on. -->
+    <key>MCPLAYER_SOCKET</key>
+    <string>/tmp/mcplayer-bus.sock</string>
+    <!-- Durable WAL under Application Support so the queue survives a reboot,
+         not just a process restart (/tmp is cleared on reboot). -->
+    <key>MCPLAYER_WAL</key>
+    <string>{{USER_HOME}}/Library/Application Support/mcplayer/queue.wal</string>
+  </dict>
+</dict>
+</plist>
