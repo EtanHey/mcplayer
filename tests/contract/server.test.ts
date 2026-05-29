@@ -182,6 +182,43 @@ describe("mcplayer D2 UDS server", () => {
     subscriber.close();
   });
 
+  test("subscribe replays existing offsets before later live messages", async () => {
+    const root = tempRoot();
+    const server = await startServer(root);
+    const producer = await connectClient(server.socketPath);
+    const subscriber = await connectClient(server.socketPath);
+
+    await producer.request("mcplayer.publish", {
+      channel: "ordered",
+      message_id: "m1",
+      payload: { order: 1 },
+    });
+
+    const subscribe = subscriber.request("mcplayer.subscribe", {
+      channel: "ordered",
+      from_offset: 1,
+    });
+    const publish = producer.request("mcplayer.publish", {
+      channel: "ordered",
+      message_id: "m2",
+      payload: { order: 2 },
+    });
+
+    expect((await subscribe).result).toEqual({ subscribed: true });
+    expect((await publish).result).toEqual({ enqueued: true, offset: 2 });
+    expect((await subscriber.next()).params).toMatchObject({
+      message_id: "m1",
+      offset: 1,
+    });
+    expect((await subscriber.next()).params).toMatchObject({
+      message_id: "m2",
+      offset: 2,
+    });
+
+    producer.close();
+    subscriber.close();
+  });
+
   test("WalFullError becomes -32004 and status still answers afterward", async () => {
     const root = tempRoot();
     const server = await startServer(root, { maxRecordsPerChannel: 1 });

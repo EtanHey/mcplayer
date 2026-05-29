@@ -56,6 +56,7 @@ export class McplayerServer {
   readonly #engineSince = new Date().toISOString();
   #server: any;
   #queue?: DurableQueue;
+  #queueOperations: Promise<void> = Promise.resolve();
   #stopping = false;
 
   constructor(opts: McplayerServerOptions = {}) {
@@ -115,6 +116,7 @@ export class McplayerServer {
 
     for (const client of this.#clients.values()) {
       try {
+        client.closed = true;
         client.socket.end();
       } catch {
         // best-effort socket cleanup
@@ -250,44 +252,53 @@ export class McplayerServer {
       }
 
       case "mcplayer.publish": {
-        const channel = params.channel as string;
-        const messageId = params.message_id as string;
-        const payload = params.payload;
-        const { offset } = this.#requireQueue().append(
-          channel,
-          messageId,
-          payload,
-        );
-        await this.#sendResult(client, request.id, { enqueued: true, offset });
-        void this.#notifySubscribers({
-          channel,
-          message_id: messageId,
-          payload,
-          offset,
+        await this.#runQueueOperation(async () => {
+          const channel = params.channel as string;
+          const messageId = params.message_id as string;
+          const payload = params.payload;
+          const { offset } = this.#requireQueue().append(
+            channel,
+            messageId,
+            payload,
+          );
+          await this.#sendResult(client, request.id, { enqueued: true, offset });
+          await this.#notifySubscribers({
+            channel,
+            message_id: messageId,
+            payload,
+            offset,
+          });
         });
         return;
       }
 
       case "mcplayer.subscribe": {
-        const channel = params.channel as string;
-        const fromOffset =
-          typeof params.from_offset === "number" ? params.from_offset : 1;
-        const key = `${client.id}:${channel}`;
-        this.#subscriptions.set(key, { client, channel, fromOffset });
-        client.subscriptions.add(key);
-        await this.#sendResult(client, request.id, { subscribed: true });
-        for (const record of this.#requireQueue().readFrom(channel, fromOffset)) {
-          await this.#sendMessageBestEffort(client, record);
-        }
+        await this.#runQueueOperation(async () => {
+          const channel = params.channel as string;
+          const fromOffset =
+            typeof params.from_offset === "number" ? params.from_offset : 1;
+          const records = this.#requireQueue().readFrom(channel, fromOffset);
+          await this.#sendResult(client, request.id, { subscribed: true });
+          for (const record of records) {
+            await this.#sendMessageBestEffort(client, record);
+          }
+          if (client.closed) return;
+
+          const key = `${client.id}:${channel}`;
+          this.#subscriptions.set(key, { client, channel, fromOffset });
+          client.subscriptions.add(key);
+        });
         return;
       }
 
       case "mcplayer.ack": {
-        this.#requireQueue().ack(
-          params.channel as string,
-          params.message_id as string,
-        );
-        await this.#sendResult(client, request.id, { acked: true });
+        await this.#runQueueOperation(async () => {
+          this.#requireQueue().ack(
+            params.channel as string,
+            params.message_id as string,
+          );
+          await this.#sendResult(client, request.id, { acked: true });
+        });
         return;
       }
 
@@ -304,6 +315,15 @@ export class McplayerServer {
   #requireQueue(): DurableQueue {
     if (!this.#queue) throw new Error("DurableQueue is not open");
     return this.#queue;
+  }
+
+  async #runQueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.#queueOperations.then(operation, operation);
+    this.#queueOperations = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await run;
   }
 
   async #notifySubscribers(record: WalRecord): Promise<void> {
