@@ -175,12 +175,16 @@ export class McplayerServer {
         }
       })
       .catch(async (error) => {
-        await this.#sendError(
-          client,
-          null,
-          -32603,
-          error instanceof Error ? error.message : String(error),
-        );
+        try {
+          await this.#sendError(
+            client,
+            null,
+            -32603,
+            error instanceof Error ? error.message : String(error),
+          );
+        } catch {
+          this.#handleClose(socket);
+        }
       });
   }
 

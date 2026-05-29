@@ -209,4 +209,20 @@ describe("mcplayer D2 UDS server", () => {
     expect(typeof (status.result as { since?: unknown }).since).toBe("string");
     client.close();
   });
+
+  test("request errors do not poison later requests on the same connection", async () => {
+    const root = tempRoot();
+    const server = await startServer(root);
+    const client = await connectClient(server.socketPath);
+
+    const invalid = await client.request("mcplayer.publish", {
+      channel: "jobs",
+      message_id: "missing-payload",
+    });
+    expect(invalid.error).toMatchObject({ code: -32602 });
+
+    const status = await client.request("mcplayer.status", {});
+    expect(status.result).toMatchObject({ state: "not-up" });
+    client.close();
+  });
 });
