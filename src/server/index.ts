@@ -97,8 +97,14 @@ export class McplayerServer {
       maxBytesPerChannel: this.#maxBytesPerChannel,
       maxRecordsPerChannel: this.#maxRecordsPerChannel,
     });
+    let previousEngineStatus = this.#engine?.state();
     this.#unsubscribeEngine = this.#engine?.onStateChange((status) => {
-      if (isDeliveringEngineState(status)) void this.#replaySubscriptions();
+      const wasDelivering =
+        previousEngineStatus !== undefined &&
+        isDeliveringEngineState(previousEngineStatus);
+      const isDelivering = isDeliveringEngineState(status);
+      previousEngineStatus = status;
+      if (!wasDelivering && isDelivering) void this.#replaySubscriptions();
     });
     this.#engine?.start();
 
@@ -361,6 +367,7 @@ export class McplayerServer {
   async #replaySubscriptions(): Promise<void> {
     await this.#runQueueOperation(async () => {
       if (!this.#queue) return;
+      if (this.#engine && !isDeliveringEngineState(this.#engine.state())) return;
       for (const subscription of this.#subscriptions.values()) {
         if (subscription.client.closed) continue;
         for (const record of this.#queue.readFrom(
