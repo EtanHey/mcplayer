@@ -107,31 +107,41 @@ export class McplayerServer {
   async shutdown(): Promise<void> {
     if (this.#stopping) return;
     this.#stopping = true;
+    let shutdownError: unknown;
 
     try {
-      this.#server?.stop(true);
-    } finally {
-      this.#server = undefined;
-    }
-
-    for (const client of this.#clients.values()) {
       try {
-        client.closed = true;
-        client.socket.end();
-      } catch {
-        // best-effort socket cleanup
+        this.#server?.stop(true);
+      } catch (error) {
+        shutdownError = error;
+      } finally {
+        this.#server = undefined;
       }
-    }
-    this.#clients.clear();
-    this.#subscriptions.clear();
 
-    try {
-      this.#queue?.close();
+      for (const client of this.#clients.values()) {
+        try {
+          client.closed = true;
+          client.socket.end();
+        } catch {
+          // best-effort socket cleanup
+        }
+      }
+      this.#clients.clear();
+      this.#subscriptions.clear();
+
+      try {
+        this.#queue?.close();
+      } catch (error) {
+        shutdownError ??= error;
+      } finally {
+        this.#queue = undefined;
+        rmSync(this.#socketPath, { force: true });
+      }
     } finally {
-      this.#queue = undefined;
-      rmSync(this.#socketPath, { force: true });
       this.#stopping = false;
     }
+
+    if (shutdownError) throw shutdownError;
   }
 
   #handleOpen(socket: BunSocket): void {
