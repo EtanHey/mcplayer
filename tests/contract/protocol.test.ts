@@ -1,0 +1,218 @@
+// RED contract tests for the mcplayer durable-contract protocol package (D0).
+// Authored by mcplayer-LEAD as the executable spec; mcplayerCodex implements
+// src/protocol/ until these pass. This is the exact surface MCL's mock mirrors —
+// see docs/PROTOCOL.md. Run: bun test tests/contract/protocol.test.ts
+import { describe, expect, test } from "bun:test";
+import {
+  ERR,
+  NdjsonDecoder,
+  classify,
+  encodeLine,
+  validateParams,
+} from "../../src/protocol";
+
+describe("NDJSON framing", () => {
+  test("encodeLine appends exactly one trailing newline", () => {
+    expect(encodeLine({ a: 1 })).toBe('{"a":1}\n');
+  });
+
+  test("decoder yields one object per complete line", () => {
+    const d = new NdjsonDecoder();
+    const out = d.push(Buffer.from('{"x":1}\n{"y":2}\n'));
+    expect(out).toEqual([{ x: 1 }, { y: 2 }]);
+  });
+
+  test("decoder buffers a partial line until its newline arrives", () => {
+    const d = new NdjsonDecoder();
+    expect(d.push(Buffer.from('{"x":'))).toEqual([]);
+    expect(d.push(Buffer.from("1}\n"))).toEqual([{ x: 1 }]);
+  });
+
+  test("decoder tolerates blank lines (skips them)", () => {
+    const d = new NdjsonDecoder();
+    expect(d.push(Buffer.from('\n{"x":1}\n\n'))).toEqual([{ x: 1 }]);
+  });
+
+  // Malformed lines are RECORDED, not thrown: a persistent socket must not die
+  // on one corrupt frame, and a durable bus must not lose the valid frames
+  // parsed alongside it (Cursor Bugbot: mid-batch parse failure data loss).
+  test("decoder records a malformed line instead of throwing", () => {
+    const d = new NdjsonDecoder();
+    expect(d.push(Buffer.from('{"invalid\n'))).toEqual([]);
+    expect(d.errors).toHaveLength(1);
+    expect(d.errors[0].line).toBe('{"invalid');
+  });
+
+  test("a malformed line does not lose valid messages in the same batch", () => {
+    const d = new NdjsonDecoder();
+    const out = d.push(Buffer.from('{"a":1}\n{bad\n{"b":2}\n'));
+    expect(out).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(d.errors).toHaveLength(1);
+  });
+});
+
+describe("JSON-RPC 2.0 strict classification", () => {
+  test("id + method => request", () => {
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "mcplayer.connect",
+        params: {},
+      }),
+    ).toBe("request");
+  });
+  test("method, no id => notification (server MUST NOT respond)", () => {
+    expect(
+      classify({ jsonrpc: "2.0", method: "mcplayer.message", params: {} }),
+    ).toBe("notification");
+  });
+  test("id + result => response", () => {
+    expect(classify({ jsonrpc: "2.0", id: 1, result: {} })).toBe("response");
+  });
+  test("id + error => response", () => {
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32603, message: "x" },
+      }),
+    ).toBe("response");
+  });
+  test("missing jsonrpc:'2.0' => invalid", () => {
+    expect(classify({ id: 1, method: "x" })).toBe("invalid");
+    expect(classify({ jsonrpc: "1.0", id: 1, method: "x" })).toBe("invalid");
+  });
+
+  test("method + result/error => invalid (no request/response shape mixing)", () => {
+    expect(classify({ jsonrpc: "2.0", id: 1, method: "foo", result: {} })).toBe(
+      "invalid",
+    );
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        method: "foo",
+        error: { code: -32603, message: "x" },
+      }),
+    ).toBe("invalid");
+  });
+
+  test("response with both result and error => invalid (JSON-RPC 2.0 spec)", () => {
+    expect(
+      classify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {},
+        error: { code: -32603, message: "x" },
+      }),
+    ).toBe("invalid");
+  });
+});
+
+describe("reserved error codes (pinned)", () => {
+  test("the four mcplayer codes are exactly -32001..-32004", () => {
+    expect(ERR.UNKNOWN_SESSION).toBe(-32001);
+    expect(ERR.UNKNOWN_CHANNEL).toBe(-32002);
+    expect(ERR.ENGINE_NOT_UP).toBe(-32003);
+    expect(ERR.WAL_FULL).toBe(-32004);
+  });
+});
+
+describe("method param validation (the 5 methods)", () => {
+  test("connect requires client_id:string", () => {
+    expect(validateParams("mcplayer.connect", { client_id: "c1" }).ok).toBe(
+      true,
+    );
+    expect(validateParams("mcplayer.connect", {}).ok).toBe(false);
+    expect(validateParams("mcplayer.connect", { client_id: 5 }).ok).toBe(false);
+  });
+
+  test("publish requires channel, message_id, payload; durable optional", () => {
+    expect(
+      validateParams("mcplayer.publish", {
+        channel: "c",
+        message_id: "m",
+        payload: { a: 1 },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateParams("mcplayer.publish", {
+        channel: "c",
+        message_id: "m",
+        payload: 0,
+        durable: true,
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateParams("mcplayer.publish", { channel: "c", message_id: "m" }).ok,
+    ).toBe(false);
+    expect(
+      validateParams("mcplayer.publish", { channel: "c", payload: 1 }).ok,
+    ).toBe(false);
+  });
+
+  test("subscribe requires channel; from_offset optional number", () => {
+    expect(validateParams("mcplayer.subscribe", { channel: "c" }).ok).toBe(
+      true,
+    );
+    expect(
+      validateParams("mcplayer.subscribe", { channel: "c", from_offset: 7 }).ok,
+    ).toBe(true);
+    expect(
+      validateParams("mcplayer.subscribe", { channel: "c", from_offset: "7" })
+        .ok,
+    ).toBe(false);
+    expect(validateParams("mcplayer.subscribe", {}).ok).toBe(false);
+  });
+
+  test("ack requires channel + message_id", () => {
+    expect(
+      validateParams("mcplayer.ack", { channel: "c", message_id: "m" }).ok,
+    ).toBe(true);
+    expect(validateParams("mcplayer.ack", { channel: "c" }).ok).toBe(false);
+  });
+
+  test("status: engine optional string", () => {
+    expect(validateParams("mcplayer.status", {}).ok).toBe(true);
+    expect(validateParams("mcplayer.status", { engine: "brainlayer" }).ok).toBe(
+      true,
+    );
+    expect(validateParams("mcplayer.status", { engine: 1 }).ok).toBe(false);
+  });
+
+  test("unknown method => not ok", () => {
+    expect(validateParams("mcplayer.nope", {}).ok).toBe(false);
+  });
+
+  // Cursor Bugbot (medium): prototype-chain names must NOT resolve to inherited
+  // Object.prototype methods and bypass the unknown-method guard.
+  test("Object.prototype method names are rejected (no prototype-chain bypass)", () => {
+    expect(validateParams("constructor", { client_id: "x" }).ok).toBe(false);
+    expect(validateParams("toString", {}).ok).toBe(false);
+    expect(validateParams("valueOf", {}).ok).toBe(false);
+    expect(validateParams("hasOwnProperty", {}).ok).toBe(false);
+  });
+});
+
+describe("NDJSON multi-byte safety (Cursor Bugbot HIGH)", () => {
+  test("a multi-byte UTF-8 char split across chunk boundaries is not corrupted", () => {
+    // "😀" = F0 9F 98 80. Split the buffer mid-emoji so the first chunk ends on
+    // an incomplete UTF-8 sequence — the decoder must not emit U+FFFD.
+    const buf = Buffer.from('{"x":"😀"}\n', "utf8");
+    const k = buf.length - 4; // lands inside the 4-byte emoji
+    const d = new NdjsonDecoder();
+    expect(d.push(buf.subarray(0, k))).toEqual([]);
+    expect(d.push(buf.subarray(k))).toEqual([{ x: "😀" }]);
+  });
+
+  test("CJK split across three chunks reassembles correctly", () => {
+    const buf = Buffer.from('{"msg":"你好世界"}\n', "utf8");
+    const d = new NdjsonDecoder();
+    const a = buf.subarray(0, 9);
+    const b = buf.subarray(9, 14);
+    const c = buf.subarray(14);
+    expect(d.push(a)).toEqual([]);
+    d.push(b);
+    expect(d.push(c)).toEqual([{ msg: "你好世界" }]);
+  });
+});
