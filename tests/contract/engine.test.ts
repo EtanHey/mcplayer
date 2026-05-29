@@ -102,4 +102,63 @@ describe("EngineSupervisor", () => {
 
     rmSync(root, { recursive: true, force: true });
   });
+
+  test("heartbeat file probe reads an explicit engine-state token from a fresh heartbeat", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcplayer-engine-busy-test-"));
+    const heartbeatPath = join(root, "heartbeat");
+    const probe = createHeartbeatFileHealthProbe({
+      path: heartbeatPath,
+      staleMs: 1000,
+    });
+
+    // A fresh heartbeat carrying a recognized state token reports that state.
+    writeFileSync(heartbeatPath, "busy");
+    expect(probe()).toBe("busy");
+
+    writeFileSync(heartbeatPath, "building");
+    expect(probe()).toBe("building");
+
+    writeFileSync(heartbeatPath, "up");
+    expect(probe()).toBe("up");
+
+    // Tokens are trimmed and case-insensitive; an engine can append detail.
+    writeFileSync(heartbeatPath, "  BUSY draining 74k backlog\n");
+    expect(probe()).toBe("busy");
+
+    // A heartbeat that is just a timestamp (or otherwise tokenless) stays a
+    // boolean health signal: fresh => true (up), preserving prior behavior.
+    writeFileSync(heartbeatPath, String(Date.now()));
+    expect(probe()).toBe(true);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("engine supervisor surfaces a busy heartbeat as busy and recovers to up", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcplayer-engine-busy-sup-"));
+    const heartbeatPath = join(root, "heartbeat");
+    writeFileSync(heartbeatPath, "up");
+    const supervisor = new EngineSupervisor({
+      initialState: "building",
+      probeIntervalMs: 10,
+      healthProbe: createHeartbeatFileHealthProbe({
+        path: heartbeatPath,
+        staleMs: 1000,
+      }),
+    });
+
+    supervisor.start();
+    await wait(25);
+    expect(supervisor.state().state).toBe("up");
+
+    writeFileSync(heartbeatPath, "busy");
+    await wait(25);
+    expect(supervisor.state().state).toBe("busy");
+
+    writeFileSync(heartbeatPath, "up");
+    await wait(25);
+    expect(supervisor.state().state).toBe("up");
+
+    supervisor.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
 });

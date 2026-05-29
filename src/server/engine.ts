@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 export type EngineState = "up" | "busy" | "building" | "not-up";
 
@@ -8,8 +8,9 @@ export interface EngineStatus {
 }
 
 export type EngineHealthProbeResult = boolean | EngineState;
-export type EngineHealthProbe =
-  () => EngineHealthProbeResult | Promise<EngineHealthProbeResult>;
+export type EngineHealthProbe = () =>
+  | EngineHealthProbeResult
+  | Promise<EngineHealthProbeResult>;
 export type EngineStateListener = (status: EngineStatus) => void;
 
 export interface EngineSupervisorOptions {
@@ -47,7 +48,10 @@ export class EngineSupervisor {
   start(): void {
     if (!this.#healthProbe || this.#timer) return;
     void this.#runProbe();
-    this.#timer = setInterval(() => void this.#runProbe(), this.#probeIntervalMs);
+    this.#timer = setInterval(
+      () => void this.#runProbe(),
+      this.#probeIntervalMs,
+    );
     this.#timer.unref?.();
   }
 
@@ -105,12 +109,39 @@ export function createHeartbeatFileHealthProbe(
   opts: HeartbeatFileHealthProbeOptions,
 ): EngineHealthProbe {
   return () => {
+    let fresh: boolean;
     try {
-      return Date.now() - statSync(opts.path).mtimeMs <= opts.staleMs;
+      fresh = Date.now() - statSync(opts.path).mtimeMs <= opts.staleMs;
     } catch {
       return false;
     }
+    if (!fresh) return false;
+    // A fresh heartbeat that carries a recognized engine-state token lets the
+    // engine declare "busy"/"building"/"up"/"not-up" directly (e.g. signal
+    // backpressure so clients back off instead of hammering an overloaded
+    // engine). A tokenless heartbeat (a timestamp or empty) stays a pure
+    // freshness signal: fresh => true (up).
+    return readHeartbeatStateToken(opts.path) ?? true;
   };
+}
+
+function readHeartbeatStateToken(path: string): EngineState | undefined {
+  let token: string;
+  try {
+    token =
+      readFileSync(path, "utf8").trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  } catch {
+    return undefined;
+  }
+  switch (token) {
+    case "up":
+    case "busy":
+    case "building":
+    case "not-up":
+      return token;
+    default:
+      return undefined;
+  }
 }
 
 function probeResultToState(result: EngineHealthProbeResult): EngineState {
