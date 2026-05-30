@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import net from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeLine, NdjsonDecoder } from "../../src/protocol";
@@ -36,6 +36,38 @@ function startFakeBrainbar(socketPath: string, instance: string) {
     server.listen(socketPath, () => resolve(server));
   });
 }
+
+function startFakeBrainbarTcp(instance: string, port = 0) {
+  const server = net.createServer((sock) => {
+    const decoder = new NdjsonDecoder();
+    sock.on("data", (chunk) => {
+      for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        if (msg.method === undefined) continue;
+        sock.write(
+          encodeLine({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ok: true, instance, echoedMethod: msg.method },
+          }),
+        );
+      }
+    });
+  });
+  return new Promise<{ port: number; server: net.Server }>((resolve) => {
+    server.listen(port, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object")
+        resolve({ port: address.port, server });
+    });
+  });
+}
+
+async function getFreeTcpPort() {
+  const { port, server } = await startFakeBrainbarTcp("port-probe");
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
 
 // Killable variant: tracks live server-side sockets so a "restart" can drop
 // existing connections (a real BrainBar process death severs them, unlike a bare
@@ -219,5 +251,150 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect((r2!.result as { ok?: boolean }).ok).toBe(true);
     expect((r2!.result as { instance?: string }).instance).toBe("B");
     expect(client.sock.destroyed).toBe(false);
+  });
+
+  test("keeps queued client data when an upstream write fails during pending flush", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-flush-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstreamPort = await getFreeTcpPort();
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let failedOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !failedOnce &&
+        this.remotePort === upstreamPort &&
+        text.includes("brain_store")
+      ) {
+        failedOnce = true;
+        this.destroy();
+        return false;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstreamPort },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const request = client.request("brain_store", 2);
+
+    const upstream = await startFakeBrainbarTcp("A", upstreamPort);
+    cleanups.push(
+      () => {
+        upstream.server.close();
+      },
+    );
+
+    const res = await request;
+    expect(res.id).toBe(2);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect((res.result as { echoedMethod?: string }).echoedMethod).toBe(
+      "brain_store",
+    );
+    expect(failedOnce).toBe(true);
+  });
+
+  test("re-buffers client data when a ready upstream rejects a direct write", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-ended-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startFakeBrainbarTcp("A");
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let failedOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !failedOnce &&
+        this.remotePort === upstream.port &&
+        text.includes("brain_search")
+      ) {
+        failedOnce = true;
+        this.destroy();
+        return false;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstream.port },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const warmup = await client.request("brain_recall", 98);
+    expect(warmup.id).toBe(98);
+
+    const res = await client.request("brain_search", 99);
+    expect(res.id).toBe(99);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(failedOnce).toBe(true);
+  });
+});
+
+describe("BrainlayerProxy docs", () => {
+  test("documents per-client upstreams and markdownlint-compatible fences/headings", () => {
+    const doc = readFileSync("docs/BRAINLAYER-PROXY.md", "utf8");
+    expect(doc).not.toContain("single upstream");
+    expect(doc).toContain("per front-client");
+    expect(doc).toContain("```text");
+    expect(doc).toContain("```ts");
+
+    const lines = doc.split("\n");
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (/^#{1,6} /.test(line)) {
+        expect(lines[i - 1] ?? "").toBe("");
+        expect(lines[i + 1] ?? "").toBe("");
+      }
+      if (/^```/.test(line)) {
+        if (!inFence) {
+          expect(line).not.toBe("```");
+          expect(lines[i - 1] ?? "").toBe("");
+        }
+        inFence = !inFence;
+      }
+    }
   });
 });
