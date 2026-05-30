@@ -62,10 +62,12 @@ function startFakeBrainbarTcp(instance: string, port = 0) {
   });
 }
 
-function startCountingFakeBrainbarTcp(instance: string) {
+function startCountingFakeBrainbarTcp(instance: string, port = 0) {
   let connections = 0;
+  const connectionInstances: string[] = [];
   const server = net.createServer((sock) => {
     connections++;
+    connectionInstances.push(instance);
     const decoder = new NdjsonDecoder();
     sock.on("data", (chunk) => {
       for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
@@ -84,11 +86,17 @@ function startCountingFakeBrainbarTcp(instance: string) {
     port: number;
     server: net.Server;
     connections: () => number;
+    connectionInstances: () => string[];
   }>((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       const address = server.address();
       if (address && typeof address === "object")
-        resolve({ port: address.port, server, connections: () => connections });
+        resolve({
+          port: address.port,
+          server,
+          connections: () => connections,
+          connectionInstances: () => [...connectionInstances],
+        });
     });
   });
 }
@@ -472,6 +480,133 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect((res.result as { instance?: string }).instance).toBe("A");
     expect(backpressuredOnce).toBe(true);
     expect(upstream.connections()).toBe(1);
+  });
+
+  test("ignores stale pending-flush callbacks after reconnect", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-stale-flush-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstreamPort = await getFreeTcpPort();
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let heldCallback: ((err?: Error) => void) | undefined;
+    let heldOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !heldOnce &&
+        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        text.includes("brain_store")
+      ) {
+        heldOnce = true;
+        heldCallback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        this.destroy();
+        return true;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstreamPort },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const request = client.request("brain_store", 101);
+    const upstream = await startCountingFakeBrainbarTcp("A", upstreamPort);
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+    for (let i = 0; i < 50 && upstream.connections() < 2; i++) await sleep(10);
+    expect(upstream.connections()).toBe(2);
+
+    heldCallback?.();
+
+    const res = await request;
+    await sleep(50);
+
+    expect(res.id).toBe(101);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(heldOnce).toBe(true);
+    expect(upstream.connections()).toBe(2);
+  });
+
+  test("flush write errors destroy the upstream and reconnect buffered data", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-flush-reconnect-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstreamPort = await getFreeTcpPort();
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let failedOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !failedOnce &&
+        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        text.includes("brain_recall")
+      ) {
+        failedOnce = true;
+        const callback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        if (callback) setImmediate(() => callback(new Error("flush failed")));
+        return true;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstreamPort },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const request = client.request("brain_recall", 102);
+    const upstream = await startCountingFakeBrainbarTcp("A", upstreamPort);
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+    const res = await request;
+
+    expect(res.id).toBe(102);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(failedOnce).toBe(true);
+    expect(upstream.connections()).toBe(2);
   });
 });
 

@@ -97,16 +97,29 @@ export class BrainlayerProxy {
       if (upstream === u) upstreamReady = false;
     };
 
+    const handleWriteFailure = (
+      target: net.Socket,
+      chunk: Buffer,
+      alreadyPending: boolean,
+    ) => {
+      if (upstream !== target) return;
+      if (!alreadyPending) pending.unshift(chunk);
+      markUpstreamUnusable(target);
+      target.destroy();
+    };
+
     const flushPending = () => {
       if (flushingPending || !socketCanWrite(upstream)) return;
+      const target = upstream;
       const buf = pending[0];
       if (!buf) return;
 
       flushingPending = true;
-      upstream.write(buf, (err) => {
+      target.write(buf, (err) => {
+        if (upstream !== target) return;
         flushingPending = false;
-        if (err || !upstream || upstream.destroyed) {
-          if (upstream) markUpstreamUnusable(upstream);
+        if (err || target.destroyed) {
+          handleWriteFailure(target, buf, true);
           return;
         }
         pending.shift();
@@ -126,20 +139,13 @@ export class BrainlayerProxy {
       }
 
       const target = upstream;
-      const onFailedWrite = () => {
-        if (upstream === target) {
-          pending.unshift(chunk);
-          markUpstreamUnusable(target);
-          target.destroy();
-        }
-      };
 
       try {
         target.write(chunk, (err) => {
-          if (err) onFailedWrite();
+          if (err) handleWriteFailure(target, chunk, false);
         });
       } catch {
-        onFailedWrite();
+        handleWriteFailure(target, chunk, false);
       }
     };
 
@@ -168,14 +174,18 @@ export class BrainlayerProxy {
       };
 
       u.on("connect", () => {
+        if (upstream !== u) return;
         upstreamReady = true;
         delay = this.#reconnectDelayMs; // reset backoff on a good connect
         flushPending();
       });
       u.on("data", (chunk: Buffer) => {
+        if (upstream !== u) return;
         if (!clientClosed) client.write(chunk);
       });
-      u.on("drain", flushPending);
+      u.on("drain", () => {
+        if (upstream === u) flushPending();
+      });
       u.on("end", () => markUpstreamUnusable(u));
       u.on("close", onGone);
       u.on("error", onGone);
