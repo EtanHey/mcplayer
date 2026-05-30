@@ -1,0 +1,223 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import net from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { encodeLine, NdjsonDecoder } from "../../src/protocol";
+import { BrainlayerProxy } from "../../src/brainlayer-proxy";
+
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => {
+  for (const c of cleanups.splice(0).reverse()) await c();
+});
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// A minimal newline-delimited JSON-RPC server standing in for BrainBar on a
+// unix socket. Echoes a canned result for any request, tagged so the test can
+// tell which upstream instance answered (to prove reconnect later).
+function startFakeBrainbar(socketPath: string, instance: string) {
+  const server = net.createServer((sock) => {
+    const decoder = new NdjsonDecoder();
+    sock.on("data", (chunk) => {
+      for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        if (msg.method === undefined) continue;
+        sock.write(
+          encodeLine({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ok: true, instance, echoedMethod: msg.method },
+          }),
+        );
+      }
+    });
+  });
+  return new Promise<net.Server>((resolve) => {
+    server.listen(socketPath, () => resolve(server));
+  });
+}
+
+// Killable variant: tracks live server-side sockets so a "restart" can drop
+// existing connections (a real BrainBar process death severs them, unlike a bare
+// server.close() which only stops accepting).
+function startKillableBrainbar(socketPath: string, instance: string) {
+  const live = new Set<net.Socket>();
+  const server = net.createServer((sock) => {
+    live.add(sock);
+    sock.on("close", () => live.delete(sock));
+    const decoder = new NdjsonDecoder();
+    sock.on("data", (chunk) => {
+      for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        if (msg.method === undefined) continue;
+        sock.write(
+          encodeLine({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ok: true, instance, echoedMethod: msg.method },
+          }),
+        );
+      }
+    });
+  });
+  return new Promise<{ kill: () => Promise<void> }>((resolve) => {
+    server.listen(socketPath, () =>
+      resolve({
+        kill: () =>
+          new Promise<void>((res) => {
+            for (const s of live) s.destroy();
+            live.clear();
+            server.close(() => res());
+          }),
+      }),
+    );
+  });
+}
+
+function connectClient(socketPath: string) {
+  const sock = net.createConnection(socketPath);
+  const decoder = new NdjsonDecoder();
+  const inbox: Array<Record<string, unknown>> = [];
+  const waiters: Array<(m: Record<string, unknown>) => void> = [];
+  sock.on("data", (chunk) => {
+    for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+      const w = waiters.shift();
+      if (w) w(msg);
+      else inbox.push(msg);
+    }
+  });
+  return {
+    sock,
+    ready: new Promise<void>((res, rej) => {
+      sock.once("connect", res);
+      sock.once("error", rej);
+    }),
+    request(method: string, id: number) {
+      sock.write(encodeLine({ jsonrpc: "2.0", id, method, params: {} }));
+      const existing = inbox.shift();
+      if (existing) return Promise.resolve(existing);
+      return new Promise<Record<string, unknown>>((res, rej) => {
+        waiters.push(res);
+        setTimeout(() => rej(new Error(`timeout waiting for ${method}`)), 2000);
+      });
+    },
+    close: () => sock.destroy(),
+  };
+}
+
+describe("BrainlayerProxy — P0.2 transparent relay core", () => {
+  test("relays a JSON-RPC request through to the upstream and back", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-"));
+    const upstreamPath = join(root, "upstream.sock");
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startFakeBrainbar(upstreamPath, "A");
+    cleanups.push(() => new Promise<void>((r) => upstream.close(() => r())));
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "unix", path: upstreamPath },
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+    expect(proxy.frontSocketPath).toBe(frontPath);
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const res = await client.request("brain_search", 1);
+    expect(res.id).toBe(1);
+    expect((res.result as { ok?: boolean }).ok).toBe(true);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect((res.result as { echoedMethod?: string }).echoedMethod).toBe(
+      "brain_search",
+    );
+  });
+
+  test("two concurrent clients each get correctly-routed responses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-"));
+    const upstreamPath = join(root, "upstream.sock");
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startFakeBrainbar(upstreamPath, "A");
+    cleanups.push(() => new Promise<void>((r) => upstream.close(() => r())));
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "unix", path: upstreamPath },
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const c1 = connectClient(frontPath);
+    const c2 = connectClient(frontPath);
+    cleanups.push(() => c1.close());
+    cleanups.push(() => c2.close());
+    await Promise.all([c1.ready, c2.ready]);
+
+    const [r1, r2] = await Promise.all([
+      c1.request("brain_store", 11),
+      c2.request("brain_recall", 22),
+    ]);
+    expect(r1.id).toBe(11);
+    expect((r1.result as { echoedMethod?: string }).echoedMethod).toBe(
+      "brain_store",
+    );
+    expect(r2.id).toBe(22);
+    expect((r2.result as { echoedMethod?: string }).echoedMethod).toBe(
+      "brain_recall",
+    );
+  });
+});
+
+describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
+  test("front connection survives an upstream restart and reconnects to the new instance", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-rc-"));
+    const upstreamPath = join(root, "upstream.sock");
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    // BrainBar instance "A" comes up first.
+    let bb = await startKillableBrainbar(upstreamPath, "A");
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "unix", path: upstreamPath },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    // Works against A.
+    const r1 = await client.request("brain_search", 1);
+    expect((r1.result as { instance?: string }).instance).toBe("A");
+
+    // KILL BrainBar A (process death severs the proxy's upstream connection).
+    await bb.kill();
+    expect(client.sock.destroyed).toBe(false); // front connection MUST survive
+
+    // Restart BrainBar as instance "B" on the SAME socket path.
+    bb = await startKillableBrainbar(upstreamPath, "B");
+
+    // The SAME client (never reconnected) issues its next call — the proxy must
+    // have reconnected the upstream once, and the call must succeed against B.
+    let r2: Record<string, unknown> | undefined;
+    for (let attempt = 0; attempt < 40 && !r2; attempt++) {
+      try {
+        r2 = await client.request("brain_search", 2);
+      } catch {
+        await sleep(25); // upstream still reconnecting; the next call lands
+      }
+    }
+    expect(r2).toBeDefined();
+    expect((r2!.result as { ok?: boolean }).ok).toBe(true);
+    expect((r2!.result as { instance?: string }).instance).toBe("B");
+    expect(client.sock.destroyed).toBe(false);
+  });
+});
