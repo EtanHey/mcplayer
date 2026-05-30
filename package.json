@@ -8,6 +8,7 @@
   },
   "bin": {
     "mcplayer": "./bin/mcplayer",
+    "mcplayer-brainlayer-proxy": "./bin/mcplayer-brainlayer-proxy",
     "mcplayer-server": "./bin/mcplayer-server"
   },
   "scripts": {

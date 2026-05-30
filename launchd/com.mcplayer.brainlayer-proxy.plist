@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mcplayer.brainlayer-proxy</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{USER_HOME}}/.bun/bin/bun</string>
+    <string>{{REPO_ROOT}}/bin/mcplayer-brainlayer-proxy</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/mcplayer-brainlayer-proxy.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/mcplayer-brainlayer-proxy.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{USER_HOME}}/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>MCPLAYER_BRAINLAYER_FRONT</key>
+    <string>/tmp/mcplayer-brainlayer.sock</string>
+    <key>MCPLAYER_BRAINLAYER_UPSTREAM</key>
+    <string>unix:/tmp/brainbar.sock</string>
+  </dict>
+</dict>
+</plist>
