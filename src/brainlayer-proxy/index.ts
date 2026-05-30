@@ -92,13 +92,10 @@ export class BrainlayerProxy {
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let delay = this.#reconnectDelayMs;
     let flushingPending = false;
-
-    const markUpstreamUnusable = (u: net.Socket) => {
-      if (upstream === u) upstreamReady = false;
-    };
+    let generation = 0;
 
     const handleWriteFailure = (target: net.Socket) => {
-      if (upstream === target) markUpstreamUnusable(target);
+      upstreamReady = false;
       target.destroy();
       flushPending();
     };
@@ -106,14 +103,16 @@ export class BrainlayerProxy {
     const flushPending = () => {
       if (flushingPending || !upstreamReady || !socketCanWrite(upstream)) return;
       const target = upstream;
+      const writeGeneration = generation;
+      const isCurrent = () => generation === writeGeneration;
       const buf = pending[0];
       if (!buf) return;
 
       flushingPending = true;
       try {
         target.write(buf, (err) => {
+          if (!isCurrent()) return;
           flushingPending = false;
-          if (upstream !== target) return;
           if (err || target.destroyed) {
             handleWriteFailure(target);
             return;
@@ -134,6 +133,8 @@ export class BrainlayerProxy {
 
     const connect = () => {
       if (clientClosed || this.#closed) return;
+      const myGen = ++generation;
+      const isCurrent = () => generation === myGen;
       const u = connectUpstream(this.#upstream);
       upstream = u;
       upstreamReady = false;
@@ -141,35 +142,38 @@ export class BrainlayerProxy {
 
       let goneHandled = false;
       const onGone = () => {
+        if (!isCurrent()) return;
         if (goneHandled) return;
         goneHandled = true;
         this.#sockets.delete(u);
         u.destroy();
-        if (upstream === u) {
-          upstream = undefined;
-          upstreamReady = false;
-          flushingPending = false;
-          // Reconnect WITHOUT tearing down the front connection (the storm fix).
-          if (clientClosed || this.#closed) return;
-          reconnectTimer = setTimeout(connect, delay);
-          delay = Math.min(delay * 2, this.#maxReconnectDelayMs);
-        }
+        upstream = undefined;
+        upstreamReady = false;
+        flushingPending = false;
+        // Reconnect WITHOUT tearing down the front connection (the storm fix).
+        if (clientClosed || this.#closed) return;
+        reconnectTimer = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, this.#maxReconnectDelayMs);
       };
 
       u.on("connect", () => {
-        if (upstream !== u) return;
+        if (!isCurrent()) return;
         upstreamReady = true;
         delay = this.#reconnectDelayMs; // reset backoff on a good connect
         flushPending();
       });
       u.on("data", (chunk: Buffer) => {
-        if (upstream !== u) return;
+        if (!isCurrent()) return;
         if (!clientClosed) client.write(chunk);
       });
       u.on("drain", () => {
-        if (upstream === u) flushPending();
+        if (!isCurrent()) return;
+        flushPending();
       });
-      u.on("end", () => markUpstreamUnusable(u));
+      u.on("end", () => {
+        if (!isCurrent()) return;
+        upstreamReady = false;
+      });
       u.on("close", onGone);
       u.on("error", onGone);
     };

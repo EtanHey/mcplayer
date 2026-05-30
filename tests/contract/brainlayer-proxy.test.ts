@@ -628,6 +628,104 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(connections).toBe(2);
   });
 
+  test("does not let stale flush callbacks release the active flush lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-generation-lock-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startCountingFakeBrainbarTcp("A");
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    const receivedIds: number[] = [];
+    upstream.server.on("connection", (sock) => {
+      const decoder = new NdjsonDecoder();
+      sock.on("data", (chunk) => {
+        for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+          if (msg.method === undefined) continue;
+          receivedIds.push(Number(msg.id));
+        }
+      });
+    });
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let staleCallback: ((err?: Error) => void) | undefined;
+    let activeWrite:
+      | { socket: net.Socket; chunk: string | Uint8Array; args: any[] }
+      | undefined;
+    let heldStale = false;
+    let heldActive = false;
+    let activeFlushInFlight = false;
+    let overlappingActiveWrites = 0;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        this.remotePort === upstream.port &&
+        text.includes('"id":501')
+      ) {
+        if (!heldStale) {
+          heldStale = true;
+          staleCallback = args.find(
+            (arg) => typeof arg === "function",
+          ) as ((err?: Error) => void) | undefined;
+          this.destroy();
+          return true;
+        }
+        if (!heldActive) {
+          heldActive = true;
+          activeFlushInFlight = true;
+          activeWrite = { socket: this, chunk, args };
+          return true;
+        }
+        if (activeFlushInFlight) overlappingActiveWrites++;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstream.port },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectOrderedClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const first = client.request("brain_first", 501);
+    for (let i = 0; i < 80 && !heldActive; i++) await sleep(10);
+    expect(heldStale).toBe(true);
+    expect(heldActive).toBe(true);
+    expect(upstream.connections()).toBe(2);
+
+    staleCallback?.();
+    const second = client.request("brain_second", 502);
+    await sleep(80);
+
+    expect(overlappingActiveWrites).toBe(0);
+
+    if (!activeWrite) throw new Error("active write was not held");
+    originalWrite.call(activeWrite.socket, activeWrite.chunk, ...activeWrite.args);
+    activeFlushInFlight = false;
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect([r1.id, r2.id]).toEqual([501, 502]);
+    for (let i = 0; i < 80 && receivedIds.length < 2; i++) await sleep(10);
+    expect(receivedIds).toEqual([501, 502]);
+  });
+
   test("ignores stale pending-flush callbacks after reconnect", async () => {
     const root = mkdtempSync(join(tmpdir(), "blp-stale-flush-"));
     const frontPath = join(root, "front.sock");
@@ -929,43 +1027,55 @@ describe("BrainlayerProxy docs", () => {
 });
 
 describe("BrainlayerProxy stale-socket guard placement", () => {
-  test("uses one ordered upstream write path with guarded stale-socket state", () => {
+  test("uses one ordered upstream write path with generation-guarded socket callbacks", () => {
     const source = readFileSync("src/brainlayer-proxy/index.ts", "utf8");
+    expect(source).toContain("let generation = 0");
+    expect(source).toContain("const myGen = ++generation");
+    expect(source).toContain("const isCurrent = () => generation === myGen");
+    expect(source).toContain(
+      "const isCurrent = () => generation === writeGeneration",
+    );
+    expect(source).not.toContain("upstream === u");
+    expect(source).not.toContain("upstream !== u");
+    expect(source).not.toContain("upstream === target");
+    expect(source).not.toContain("upstream !== target");
+
     const flushCallback = source.slice(
       source.indexOf("target.write(buf, (err) => {"),
       source.indexOf("const bufferForReconnect"),
     );
+    const flushGuard = flushCallback.indexOf("if (!isCurrent()) return");
     const clearsLock = flushCallback.indexOf("flushingPending = false");
-    const staleReturn = flushCallback.indexOf("if (upstream !== target) return");
+    const shiftsPending = flushCallback.indexOf("pending.shift()");
+    expect(flushGuard).toBeGreaterThanOrEqual(0);
     expect(clearsLock).toBeGreaterThanOrEqual(0);
-    expect(staleReturn).toBeGreaterThanOrEqual(0);
-    expect(clearsLock).toBeLessThan(staleReturn);
+    expect(shiftsPending).toBeGreaterThan(clearsLock);
+    expect(flushGuard).toBeLessThan(clearsLock);
 
     const onGone = source.slice(
       source.indexOf("const onGone = () => {"),
       source.indexOf('u.on("connect"'),
     );
-    const activeBlock = onGone.slice(
-      onGone.indexOf("if (upstream === u) {"),
-      onGone.indexOf("};", onGone.indexOf("const onGone")),
-    );
-    expect(activeBlock).toContain("reconnectTimer = setTimeout(connect, delay)");
-    expect(activeBlock).toContain(
+    expect(
+      onGone
+        .trimStart()
+        .startsWith("const onGone = () => {\n        if (!isCurrent()) return"),
+    ).toBe(true);
+    expect(onGone).toContain("reconnectTimer = setTimeout(connect, delay)");
+    expect(onGone).toContain(
       "delay = Math.min(delay * 2, this.#maxReconnectDelayMs)",
     );
 
-    const writeFailure = source.slice(
-      source.indexOf("const handleWriteFailure = ("),
-      source.indexOf("const flushPending"),
-    );
-    const stateMutationGuard = writeFailure.indexOf("if (upstream === target)");
-    const marksUnusable = writeFailure.indexOf("markUpstreamUnusable(target)");
-    const destroysTarget = writeFailure.indexOf("target.destroy()");
-    const resumesFlush = writeFailure.indexOf("flushPending()");
-    expect(stateMutationGuard).toBeGreaterThanOrEqual(0);
-    expect(marksUnusable).toBeGreaterThan(stateMutationGuard);
-    expect(destroysTarget).toBeGreaterThan(stateMutationGuard);
-    expect(resumesFlush).toBeGreaterThan(destroysTarget);
+    for (const eventName of ["connect", "data", "drain", "end"]) {
+      const handler = source.slice(
+        source.indexOf(`u.on("${eventName}"`),
+        source.indexOf("});", source.indexOf(`u.on("${eventName}"`)) + 3,
+      );
+      expect(handler).toContain("if (!isCurrent()) return");
+      expect(handler.indexOf("if (!isCurrent()) return")).toBeLessThan(
+        handler.indexOf("\n", handler.indexOf("=> {")) + 10,
+      );
+    }
 
     expect(source).not.toContain("writeToReadyUpstream");
     expect(source.match(/\.write\(/g)?.length).toBe(2);
