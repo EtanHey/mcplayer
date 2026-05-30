@@ -728,6 +728,73 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect((after.result as { instance?: string }).instance).toBe("A");
     expect(upstream.connections()).toBe(2);
   });
+
+  test("re-queues direct write errors that arrive after socket supersession", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-stale-direct-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startCountingFakeBrainbarTcp("A");
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let heldCallback: ((err?: Error) => void) | undefined;
+    let heldOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !heldOnce &&
+        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
+        text.includes('"id":302')
+      ) {
+        heldOnce = true;
+        heldCallback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        this.destroy();
+        return true;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstream.port },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectOrderedClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const warmup = await client.request("brain_store", 301);
+    expect(warmup.id).toBe(301);
+
+    const request = client.request("brain_search", 302);
+    for (let i = 0; i < 50 && upstream.connections() < 2; i++) await sleep(10);
+    expect(upstream.connections()).toBe(2);
+
+    heldCallback?.(new Error("stale direct write failed"));
+
+    const res = await request;
+    expect(res.id).toBe(302);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(heldOnce).toBe(true);
+    expect(upstream.connections()).toBe(2);
+  });
 });
 
 describe("BrainlayerProxy docs", () => {
@@ -782,5 +849,21 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
     expect(activeBlock).toContain(
       "delay = Math.min(delay * 2, this.#maxReconnectDelayMs)",
     );
+
+    const writeFailure = source.slice(
+      source.indexOf("const handleWriteFailure = ("),
+      source.indexOf("const flushPending"),
+    );
+    const requeuesData = writeFailure.indexOf("pending.unshift(chunk)");
+    const stateMutationGuard = writeFailure.indexOf("if (upstream === target)");
+    const marksUnusable = writeFailure.indexOf("markUpstreamUnusable(target)");
+    const destroysTarget = writeFailure.indexOf("target.destroy()");
+    const resumesFlush = writeFailure.indexOf("flushPending()");
+    expect(requeuesData).toBeGreaterThanOrEqual(0);
+    expect(stateMutationGuard).toBeGreaterThanOrEqual(0);
+    expect(marksUnusable).toBeGreaterThan(stateMutationGuard);
+    expect(requeuesData).toBeLessThan(stateMutationGuard);
+    expect(destroysTarget).toBeGreaterThan(stateMutationGuard);
+    expect(resumesFlush).toBeGreaterThan(destroysTarget);
   });
 });

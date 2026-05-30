@@ -102,10 +102,10 @@ export class BrainlayerProxy {
       chunk: Buffer,
       alreadyPending: boolean,
     ) => {
-      if (upstream !== target) return;
       if (!alreadyPending) pending.unshift(chunk);
-      markUpstreamUnusable(target);
+      if (upstream === target) markUpstreamUnusable(target);
       target.destroy();
+      flushPending();
     };
 
     const flushPending = () => {
