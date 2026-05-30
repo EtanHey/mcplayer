@@ -175,6 +175,48 @@ function connectClient(socketPath: string) {
   };
 }
 
+function connectOrderedClient(socketPath: string) {
+  const sock = net.createConnection(socketPath);
+  const decoder = new NdjsonDecoder();
+  const pendingById = new Map<
+    number,
+    { resolve: (m: Record<string, unknown>) => void; reject: (e: Error) => void }
+  >();
+  sock.on("data", (chunk) => {
+    for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+      const id = Number(msg.id);
+      const pending = pendingById.get(id);
+      if (!pending) continue;
+      pendingById.delete(id);
+      pending.resolve(msg);
+    }
+  });
+  return {
+    sock,
+    ready: new Promise<void>((res, rej) => {
+      sock.once("connect", res);
+      sock.once("error", rej);
+    }),
+    request(method: string, id: number, timeoutMs = 2000) {
+      sock.write(encodeLine({ jsonrpc: "2.0", id, method, params: {} }));
+      return new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`timeout waiting for ${method}:${id}`)),
+          timeoutMs,
+        );
+        pendingById.set(id, {
+          resolve: (msg) => {
+            clearTimeout(timer);
+            resolve(msg);
+          },
+          reject,
+        });
+      });
+    },
+    close: () => sock.destroy(),
+  };
+}
+
 describe("BrainlayerProxy — P0.2 transparent relay core", () => {
   test("relays a JSON-RPC request through to the upstream and back", async () => {
     const root = mkdtempSync(join(tmpdir(), "blp-"));
@@ -608,6 +650,84 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(failedOnce).toBe(true);
     expect(upstream.connections()).toBe(2);
   });
+
+  test("rapid reconnect churn does not lose data, mis-order responses, or inflate reconnects", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-churn-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstreamPort = await getFreeTcpPort();
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let heldCallback: ((err?: Error) => void) | undefined;
+    let heldOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !heldOnce &&
+        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        text.includes('"id":201')
+      ) {
+        heldOnce = true;
+        heldCallback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        this.destroy();
+        return true;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstreamPort },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectOrderedClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const requests = [
+      client.request("brain_store", 201),
+      client.request("brain_search", 202),
+      client.request("brain_recall", 203),
+    ];
+    const upstream = await startCountingFakeBrainbarTcp("A", upstreamPort);
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    for (let i = 0; i < 100 && upstream.connections() < 2; i++) await sleep(10);
+    expect(upstream.connections()).toBe(2);
+
+    heldCallback?.();
+
+    const responses = await Promise.all(requests);
+    await sleep(80);
+
+    expect(responses.map((r) => r.id)).toEqual([201, 202, 203]);
+    expect(responses.map((r) => (r.result as { instance?: string }).instance))
+      .toEqual(["A", "A", "A"]);
+    expect(heldOnce).toBe(true);
+    expect(upstream.connections()).toBe(2);
+
+    const after = await client.request("brain_entity", 204);
+    expect(after.id).toBe(204);
+    expect((after.result as { instance?: string }).instance).toBe("A");
+    expect(upstream.connections()).toBe(2);
+  });
 });
 
 describe("BrainlayerProxy docs", () => {
@@ -634,5 +754,33 @@ describe("BrainlayerProxy docs", () => {
         inFence = !inFence;
       }
     }
+  });
+});
+
+describe("BrainlayerProxy stale-socket guard placement", () => {
+  test("clears flush lock before stale-callback return and reconnects only active upstream", () => {
+    const source = readFileSync("src/brainlayer-proxy/index.ts", "utf8");
+    const flushCallback = source.slice(
+      source.indexOf("target.write(buf, (err) => {"),
+      source.indexOf("const bufferForReconnect"),
+    );
+    const clearsLock = flushCallback.indexOf("flushingPending = false");
+    const staleReturn = flushCallback.indexOf("if (upstream !== target) return");
+    expect(clearsLock).toBeGreaterThanOrEqual(0);
+    expect(staleReturn).toBeGreaterThanOrEqual(0);
+    expect(clearsLock).toBeLessThan(staleReturn);
+
+    const onGone = source.slice(
+      source.indexOf("const onGone = () => {"),
+      source.indexOf('u.on("connect"'),
+    );
+    const activeBlock = onGone.slice(
+      onGone.indexOf("if (upstream === u) {"),
+      onGone.indexOf("};", onGone.indexOf("const onGone")),
+    );
+    expect(activeBlock).toContain("reconnectTimer = setTimeout(connect, delay)");
+    expect(activeBlock).toContain(
+      "delay = Math.min(delay * 2, this.#maxReconnectDelayMs)",
+    );
   });
 });

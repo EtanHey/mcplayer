@@ -116,8 +116,8 @@ export class BrainlayerProxy {
 
       flushingPending = true;
       target.write(buf, (err) => {
-        if (upstream !== target) return;
         flushingPending = false;
+        if (upstream !== target) return;
         if (err || target.destroyed) {
           handleWriteFailure(target, buf, true);
           return;
@@ -166,11 +166,11 @@ export class BrainlayerProxy {
           upstream = undefined;
           upstreamReady = false;
           flushingPending = false;
+          // Reconnect WITHOUT tearing down the front connection (the storm fix).
+          if (clientClosed || this.#closed) return;
+          reconnectTimer = setTimeout(connect, delay);
+          delay = Math.min(delay * 2, this.#maxReconnectDelayMs);
         }
-        // Reconnect WITHOUT tearing down the front connection (the storm fix).
-        if (clientClosed || this.#closed) return;
-        reconnectTimer = setTimeout(connect, delay);
-        delay = Math.min(delay * 2, this.#maxReconnectDelayMs);
       };
 
       u.on("connect", () => {
