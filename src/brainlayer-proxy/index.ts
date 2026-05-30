@@ -97,56 +97,39 @@ export class BrainlayerProxy {
       if (upstream === u) upstreamReady = false;
     };
 
-    const handleWriteFailure = (
-      target: net.Socket,
-      chunk: Buffer,
-      alreadyPending: boolean,
-    ) => {
-      if (!alreadyPending) pending.unshift(chunk);
+    const handleWriteFailure = (target: net.Socket) => {
       if (upstream === target) markUpstreamUnusable(target);
       target.destroy();
       flushPending();
     };
 
     const flushPending = () => {
-      if (flushingPending || !socketCanWrite(upstream)) return;
+      if (flushingPending || !upstreamReady || !socketCanWrite(upstream)) return;
       const target = upstream;
       const buf = pending[0];
       if (!buf) return;
 
       flushingPending = true;
-      target.write(buf, (err) => {
+      try {
+        target.write(buf, (err) => {
+          flushingPending = false;
+          if (upstream !== target) return;
+          if (err || target.destroyed) {
+            handleWriteFailure(target);
+            return;
+          }
+          pending.shift();
+          setImmediate(flushPending);
+        });
+      } catch {
         flushingPending = false;
-        if (upstream !== target) return;
-        if (err || target.destroyed) {
-          handleWriteFailure(target, buf, true);
-          return;
-        }
-        pending.shift();
-        setImmediate(flushPending);
-      });
+        handleWriteFailure(target);
+      }
     };
 
     const bufferForReconnect = (chunk: Buffer) => {
       pending.push(chunk);
       flushPending();
-    };
-
-    const writeToReadyUpstream = (chunk: Buffer) => {
-      if (!upstreamReady || !socketCanWrite(upstream)) {
-        bufferForReconnect(chunk);
-        return;
-      }
-
-      const target = upstream;
-
-      try {
-        target.write(chunk, (err) => {
-          if (err) handleWriteFailure(target, chunk, false);
-        });
-      } catch {
-        handleWriteFailure(target, chunk, false);
-      }
     };
 
     const connect = () => {
@@ -194,7 +177,7 @@ export class BrainlayerProxy {
     client.on("data", (chunk: Buffer) => {
       // Buffer until an upstream is connected (initial connect OR a reconnect),
       // then flush in order — a request sent while BrainBar is down still lands.
-      writeToReadyUpstream(chunk);
+      bufferForReconnect(chunk);
     });
 
     const teardownClient = () => {

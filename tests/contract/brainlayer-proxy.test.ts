@@ -404,7 +404,7 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(failedOnce).toBe(true);
   });
 
-  test("re-buffers client data when a ready upstream rejects a direct write", async () => {
+  test("keeps queued client data when an upstream write fails after ready", async () => {
     const root = mkdtempSync(join(tmpdir(), "blp-ended-"));
     const frontPath = join(root, "front.sock");
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -522,6 +522,110 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect((res.result as { instance?: string }).instance).toBe("A");
     expect(backpressuredOnce).toBe(true);
     expect(upstream.connections()).toBe(1);
+  });
+
+  test("preserves byte FIFO when fresh client data arrives during pending flush reconnect", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-byte-order-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstreamPort = await getFreeTcpPort();
+    const receivedIds: number[] = [];
+    let connections = 0;
+    const upstream = net.createServer((sock) => {
+      connections++;
+      const decoder = new NdjsonDecoder();
+      sock.on("data", (chunk) => {
+        for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+          if (msg.method === undefined) continue;
+          receivedIds.push(Number(msg.id));
+          sock.write(
+            encodeLine({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { ok: true, instance: "A", echoedMethod: msg.method },
+            }),
+          );
+        }
+      });
+    });
+    cleanups.push(() => {
+      upstream.close();
+    });
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let heldCallback: ((err?: Error) => void) | undefined;
+    let heldSocket: net.Socket | undefined;
+    let heldOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      if (!heldOnce && this.remotePort === upstreamPort) {
+        heldOnce = true;
+        heldSocket = this;
+        heldCallback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        return true;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstreamPort },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = net.createConnection(frontPath);
+    client.on("data", () => {});
+    cleanups.push(() => client.destroy());
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+
+    const splitFrame = Buffer.from(
+      encodeLine({
+        jsonrpc: "2.0",
+        id: 401,
+        method: "brain_split",
+        params: { value: "first" },
+      }),
+    );
+    const splitAt = Math.floor(splitFrame.length / 2);
+    client.write(splitFrame.subarray(0, splitAt));
+    client.write(splitFrame.subarray(splitAt));
+
+    await new Promise<void>((resolve) =>
+      upstream.listen(upstreamPort, "127.0.0.1", () => resolve()),
+    );
+    for (let i = 0; i < 80 && !heldOnce; i++) await sleep(10);
+    expect(heldOnce).toBe(true);
+
+    client.write(
+      encodeLine({
+        jsonrpc: "2.0",
+        id: 402,
+        method: "brain_after",
+        params: { value: "second" },
+      }),
+    );
+    await sleep(80);
+
+    heldSocket?.destroy();
+    heldCallback?.(new Error("first flush failed after later bytes arrived"));
+
+    for (let i = 0; i < 100 && receivedIds.length < 2; i++) await sleep(10);
+    expect(receivedIds).toEqual([401, 402]);
+    expect(connections).toBe(2);
   });
 
   test("ignores stale pending-flush callbacks after reconnect", async () => {
@@ -729,7 +833,7 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(upstream.connections()).toBe(2);
   });
 
-  test("re-queues direct write errors that arrive after socket supersession", async () => {
+  test("keeps queued write errors that arrive after socket supersession", async () => {
     const root = mkdtempSync(join(tmpdir(), "blp-stale-direct-"));
     const frontPath = join(root, "front.sock");
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -825,7 +929,7 @@ describe("BrainlayerProxy docs", () => {
 });
 
 describe("BrainlayerProxy stale-socket guard placement", () => {
-  test("clears flush lock before stale-callback return and reconnects only active upstream", () => {
+  test("uses one ordered upstream write path with guarded stale-socket state", () => {
     const source = readFileSync("src/brainlayer-proxy/index.ts", "utf8");
     const flushCallback = source.slice(
       source.indexOf("target.write(buf, (err) => {"),
@@ -854,16 +958,25 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
       source.indexOf("const handleWriteFailure = ("),
       source.indexOf("const flushPending"),
     );
-    const requeuesData = writeFailure.indexOf("pending.unshift(chunk)");
     const stateMutationGuard = writeFailure.indexOf("if (upstream === target)");
     const marksUnusable = writeFailure.indexOf("markUpstreamUnusable(target)");
     const destroysTarget = writeFailure.indexOf("target.destroy()");
     const resumesFlush = writeFailure.indexOf("flushPending()");
-    expect(requeuesData).toBeGreaterThanOrEqual(0);
     expect(stateMutationGuard).toBeGreaterThanOrEqual(0);
     expect(marksUnusable).toBeGreaterThan(stateMutationGuard);
-    expect(requeuesData).toBeLessThan(stateMutationGuard);
     expect(destroysTarget).toBeGreaterThan(stateMutationGuard);
     expect(resumesFlush).toBeGreaterThan(destroysTarget);
+
+    expect(source).not.toContain("writeToReadyUpstream");
+    expect(source.match(/\.write\(/g)?.length).toBe(2);
+    expect(source).toContain("client.write(chunk)");
+    expect(source).toContain("target.write(buf, (err) => {");
+
+    const clientDataHandler = source.slice(
+      source.indexOf('client.on("data"'),
+      source.indexOf("const teardownClient"),
+    );
+    expect(clientDataHandler).toContain("bufferForReconnect(chunk)");
+    expect(clientDataHandler).not.toContain(".write(");
   });
 });
