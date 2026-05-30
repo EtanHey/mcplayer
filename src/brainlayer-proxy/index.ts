@@ -28,6 +28,8 @@ export interface BrainlayerProxyOptions {
   reconnectDelayMs?: number;
   /** Backoff ceiling (ms). Default 2000. */
   maxReconnectDelayMs?: number;
+  /** Upstream connect deadline (ms). Default 5000. */
+  connectTimeoutMs?: number;
 }
 
 export function connectUpstream(target: UpstreamTarget): net.Socket {
@@ -52,6 +54,7 @@ export class BrainlayerProxy {
   readonly #upstream: UpstreamTarget;
   readonly #reconnectDelayMs: number;
   readonly #maxReconnectDelayMs: number;
+  readonly #connectTimeoutMs: number;
   #server?: net.Server;
   #closed = false;
   readonly #sockets = new Set<net.Socket>();
@@ -61,6 +64,7 @@ export class BrainlayerProxy {
     this.#upstream = opts.upstream;
     this.#reconnectDelayMs = opts.reconnectDelayMs ?? 250;
     this.#maxReconnectDelayMs = opts.maxReconnectDelayMs ?? 2000;
+    this.#connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
   }
 
   get frontSocketPath(): string {
@@ -139,12 +143,19 @@ export class BrainlayerProxy {
       upstream = u;
       upstreamReady = false;
       this.#sockets.add(u);
+      let connectTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearConnectTimer = () => {
+        if (!connectTimer) return;
+        clearTimeout(connectTimer);
+        connectTimer = undefined;
+      };
 
       let goneHandled = false;
       const onGone = () => {
         if (!isCurrent()) return;
         if (goneHandled) return;
         goneHandled = true;
+        clearConnectTimer();
         this.#sockets.delete(u);
         u.destroy();
         upstream = undefined;
@@ -156,8 +167,14 @@ export class BrainlayerProxy {
         delay = Math.min(delay * 2, this.#maxReconnectDelayMs);
       };
 
+      connectTimer = setTimeout(() => {
+        if (!isCurrent()) return;
+        u.destroy();
+      }, this.#connectTimeoutMs);
+
       u.on("connect", () => {
         if (!isCurrent()) return;
+        clearConnectTimer();
         upstreamReady = true;
         delay = this.#reconnectDelayMs; // reset backoff on a good connect
         flushPending();

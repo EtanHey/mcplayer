@@ -524,6 +524,67 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(upstream.connections()).toBe(1);
   });
 
+  test("times out a hung upstream connect and reconnects buffered data", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-connect-timeout-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startCountingFakeBrainbarTcp("A");
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    const originalCreateConnection = net.createConnection;
+    let upstreamAttempts = 0;
+    let fakeDestroyed = false;
+    net.createConnection = function (...args: any[]) {
+      const target = args[0] as { host?: string; port?: number } | undefined;
+      if (
+        target?.host === "127.0.0.1" &&
+        target?.port === upstream.port &&
+        upstreamAttempts === 0
+      ) {
+        upstreamAttempts++;
+        const fake = new net.Socket();
+        let destroyed = false;
+        fake.destroy = ((error?: Error) => {
+          if (destroyed) return fake;
+          destroyed = true;
+          fakeDestroyed = true;
+          queueMicrotask(() => fake.emit("close", Boolean(error)));
+          return fake;
+        }) as typeof fake.destroy;
+        return fake;
+      }
+      if (target?.host === "127.0.0.1" && target?.port === upstream.port)
+        upstreamAttempts++;
+      return originalCreateConnection.apply(net, args as never);
+    } as typeof net.createConnection;
+    cleanups.push(() => {
+      net.createConnection = originalCreateConnection;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstream.port },
+      reconnectDelayMs: 10,
+      connectTimeoutMs: 25,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectOrderedClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const res = await client.request("brain_timeout", 150, 1500);
+    expect(res.id).toBe(150);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(fakeDestroyed).toBe(true);
+    expect(upstreamAttempts).toBeGreaterThanOrEqual(2);
+    expect(upstream.connections()).toBe(1);
+  });
+
   test("preserves byte FIFO when fresh client data arrives during pending flush reconnect", async () => {
     const root = mkdtempSync(join(tmpdir(), "blp-byte-order-"));
     const frontPath = join(root, "front.sock");
@@ -1032,6 +1093,8 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
     expect(source).toContain("let generation = 0");
     expect(source).toContain("const myGen = ++generation");
     expect(source).toContain("const isCurrent = () => generation === myGen");
+    expect(source).toContain("connectTimeoutMs?: number");
+    expect(source).toContain("this.#connectTimeoutMs = opts.connectTimeoutMs ?? 5000");
     expect(source).toContain(
       "const isCurrent = () => generation === writeGeneration",
     );
@@ -1065,6 +1128,22 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
     expect(onGone).toContain(
       "delay = Math.min(delay * 2, this.#maxReconnectDelayMs)",
     );
+    expect(onGone).toContain("clearConnectTimer()");
+
+    const connectDeadline = source.slice(
+      source.indexOf("connectTimer = setTimeout(() => {"),
+      source.indexOf('u.on("connect"'),
+    );
+    expect(connectDeadline).toContain("if (!isCurrent()) return");
+    expect(connectDeadline).toContain("u.destroy()");
+    expect(connectDeadline).toContain("this.#connectTimeoutMs");
+
+    const connectHandler = source.slice(
+      source.indexOf('u.on("connect"'),
+      source.indexOf('u.on("data"'),
+    );
+    expect(connectHandler).toContain("if (!isCurrent()) return");
+    expect(connectHandler).toContain("clearConnectTimer()");
 
     for (const eventName of ["connect", "data", "drain", "end"]) {
       const handler = source.slice(
