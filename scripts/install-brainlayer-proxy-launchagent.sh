@@ -20,9 +20,23 @@ fi
 
 mkdir -p "${TARGET_DIR}"
 
+esc_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
+esc_plist_string() {
+  local value
+  value="${1//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  printf '%s' "${value}"
+}
+
 tmp_plist="$(mktemp)"
 trap 'rm -f "${tmp_plist}"' EXIT
-sed "s|{{USER_HOME}}|${HOME}|g; s|{{REPO_ROOT}}|${REPO_ROOT}|g" "${SOURCE_PLIST}" > "${tmp_plist}"
+HOME_ESCAPED="$(esc_sed_replacement "$(esc_plist_string "${HOME}")")"
+REPO_ROOT_ESCAPED="$(esc_sed_replacement "$(esc_plist_string "${REPO_ROOT}")")"
+sed "s|{{USER_HOME}}|${HOME_ESCAPED}|g; s|{{REPO_ROOT}}|${REPO_ROOT_ESCAPED}|g" "${SOURCE_PLIST}" > "${tmp_plist}"
 mv -f "${tmp_plist}" "${TARGET_PLIST}"
 
 launchctl bootout "${LAUNCH_DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true

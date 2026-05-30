@@ -6,6 +6,7 @@ import {
   brainlayerProxyConfigFromEnv,
   formatUpstreamTarget,
   parseUpstreamTarget,
+  shutdownBrainlayerProxyDaemon,
 } from "../../src/brainlayer-proxy/cli";
 
 describe("BrainLayer proxy daemon CLI config", () => {
@@ -86,5 +87,25 @@ describe("BrainLayer proxy daemon CLI config", () => {
       await proc.exited;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("shutdown exits non-zero when proxy shutdown rejects", async () => {
+    const exits: number[] = [];
+    const errors: string[] = [];
+    await shutdownBrainlayerProxyDaemon(
+      {
+        shutdown: async () => {
+          throw new Error("shutdown rejected");
+        },
+      },
+      {
+        exit: (code) => exits.push(code),
+        error: (line) => errors.push(line),
+      },
+    );
+
+    expect(exits).toEqual([1]);
+    expect(errors.join("\n")).toContain("BRAINLAYER_PROXY_SHUTDOWN_ERROR");
+    expect(errors.join("\n")).toContain("shutdown rejected");
   });
 });

@@ -108,3 +108,24 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "${repo_root}/bin/mcplayer-brainlayer-proxy" ]
 }
+
+@test "brainlayer proxy install escapes sed replacement metacharacters in repo path" {
+  local tricky_root plist_target expected_root
+  tricky_root="$MCPLAYER_TEST_TMP/repo&with|chars"
+  mkdir -p "$tricky_root"
+  cp -R "$BATS_TEST_DIRNAME/.." "$tricky_root/mcplayer"
+  expected_root="$(cd "$tricky_root/mcplayer" && pwd)"
+  plist_target="$(launchagent_path)"
+
+  run env HOME="$MCPLAYER_TEST_TMP" PATH="$MCPLAYER_TEST_BIN:$PATH" \
+    "$tricky_root/mcplayer/scripts/install-brainlayer-proxy-launchagent.sh"
+  [ "$status" -eq 0 ]
+
+  run plutil -lint "$plist_target"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *": OK" ]]
+
+  run plutil -extract ProgramArguments.1 raw "$plist_target"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$expected_root/bin/mcplayer-brainlayer-proxy" ]
+}

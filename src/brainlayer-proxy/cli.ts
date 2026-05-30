@@ -53,6 +53,35 @@ export function brainlayerProxyConfigFromEnv(
   };
 }
 
+interface ShutdownProxy {
+  shutdown(): Promise<void>;
+}
+
+interface ShutdownHooks {
+  exit(code: number): void;
+  error(line: string): void;
+}
+
+export async function shutdownBrainlayerProxyDaemon(
+  proxy: ShutdownProxy,
+  hooks: ShutdownHooks = {
+    exit: (code) => process.exit(code),
+    error: (line) => console.error(line),
+  },
+): Promise<void> {
+  try {
+    await proxy.shutdown();
+    hooks.exit(0);
+  } catch (err) {
+    hooks.error(
+      `BRAINLAYER_PROXY_SHUTDOWN_ERROR ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    hooks.exit(1);
+  }
+}
+
 export async function runBrainlayerProxyDaemon(
   env: Record<string, string | undefined> = process.env,
 ): Promise<void> {
@@ -68,8 +97,7 @@ export async function runBrainlayerProxyDaemon(
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await proxy.shutdown();
-    process.exit(0);
+    await shutdownBrainlayerProxyDaemon(proxy);
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
