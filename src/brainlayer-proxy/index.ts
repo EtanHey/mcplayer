@@ -103,7 +103,7 @@ export class BrainlayerProxy {
       if (!buf) return;
 
       flushingPending = true;
-      const wrote = upstream.write(buf, (err) => {
+      upstream.write(buf, (err) => {
         flushingPending = false;
         if (err || !upstream || upstream.destroyed) {
           if (upstream) markUpstreamUnusable(upstream);
@@ -112,7 +112,6 @@ export class BrainlayerProxy {
         pending.shift();
         setImmediate(flushPending);
       });
-      if (!wrote) markUpstreamUnusable(upstream);
     };
 
     const bufferForReconnect = (chunk: Buffer) => {
@@ -136,10 +135,9 @@ export class BrainlayerProxy {
       };
 
       try {
-        const wrote = target.write(chunk, (err) => {
+        target.write(chunk, (err) => {
           if (err) onFailedWrite();
         });
-        if (!wrote) onFailedWrite();
       } catch {
         onFailedWrite();
       }
@@ -177,6 +175,7 @@ export class BrainlayerProxy {
       u.on("data", (chunk: Buffer) => {
         if (!clientClosed) client.write(chunk);
       });
+      u.on("drain", flushPending);
       u.on("end", () => markUpstreamUnusable(u));
       u.on("close", onGone);
       u.on("error", onGone);

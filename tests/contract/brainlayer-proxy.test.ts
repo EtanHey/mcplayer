@@ -62,6 +62,37 @@ function startFakeBrainbarTcp(instance: string, port = 0) {
   });
 }
 
+function startCountingFakeBrainbarTcp(instance: string) {
+  let connections = 0;
+  const server = net.createServer((sock) => {
+    connections++;
+    const decoder = new NdjsonDecoder();
+    sock.on("data", (chunk) => {
+      for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        if (msg.method === undefined) continue;
+        sock.write(
+          encodeLine({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ok: true, instance, echoedMethod: msg.method },
+          }),
+        );
+      }
+    });
+  });
+  return new Promise<{
+    port: number;
+    server: net.Server;
+    connections: () => number;
+  }>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object")
+        resolve({ port: address.port, server, connections: () => connections });
+    });
+  });
+}
+
 async function getFreeTcpPort() {
   const { port, server } = await startFakeBrainbarTcp("port-probe");
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -272,12 +303,20 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !failedOnce &&
-        this.remotePort === upstreamPort &&
+        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_store")
       ) {
         failedOnce = true;
-        this.destroy();
-        return false;
+        const callback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        if (callback)
+          setImmediate(() => {
+            callback(new Error("write failed"));
+            this.destroy();
+          });
+        else this.destroy();
+        return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
@@ -337,12 +376,20 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !failedOnce &&
-        this.remotePort === upstream.port &&
+        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_search")
       ) {
         failedOnce = true;
-        this.destroy();
-        return false;
+        const callback = args.find(
+          (arg) => typeof arg === "function",
+        ) as ((err?: Error) => void) | undefined;
+        if (callback)
+          setImmediate(() => {
+            callback(new Error("write failed"));
+            this.destroy();
+          });
+        else this.destroy();
+        return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
@@ -369,6 +416,62 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(res.id).toBe(99);
     expect((res.result as { instance?: string }).instance).toBe("A");
     expect(failedOnce).toBe(true);
+  });
+
+  test("does not reconnect when upstream write returns false for backpressure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "blp-backpressure-"));
+    const frontPath = join(root, "front.sock");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+
+    const upstream = await startCountingFakeBrainbarTcp("A");
+    cleanups.push(() => {
+      upstream.server.close();
+    });
+
+    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    let backpressuredOnce = false;
+    net.Socket.prototype.write = function (
+      this: net.Socket,
+      chunk: string | Uint8Array,
+      ...args: any[]
+    ) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk);
+      if (
+        !backpressuredOnce &&
+        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
+        text.includes("brain_search")
+      ) {
+        backpressuredOnce = true;
+        originalWrite.call(this, chunk, ...args);
+        return false;
+      }
+      return originalWrite.call(this, chunk, ...args);
+    } as typeof net.Socket.prototype.write;
+    cleanups.push(() => {
+      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+    });
+
+    const proxy = new BrainlayerProxy({
+      frontSocketPath: frontPath,
+      upstream: { kind: "tcp", host: "127.0.0.1", port: upstream.port },
+      reconnectDelayMs: 20,
+    });
+    await proxy.start();
+    cleanups.push(() => proxy.shutdown());
+
+    const client = connectClient(frontPath);
+    cleanups.push(() => client.close());
+    await client.ready;
+
+    const res = await client.request("brain_search", 100);
+    await sleep(80);
+
+    expect(res.id).toBe(100);
+    expect((res.result as { instance?: string }).instance).toBe("A");
+    expect(backpressuredOnce).toBe(true);
+    expect(upstream.connections()).toBe(1);
   });
 });
 
