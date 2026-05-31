@@ -107,7 +107,6 @@ async function getFreeTcpPort() {
   return port;
 }
 
-
 // Killable variant: tracks live server-side sockets so a "restart" can drop
 // existing connections (a real BrainBar process death severs them, unlike a bare
 // server.close() which only stops accepting).
@@ -180,7 +179,10 @@ function connectOrderedClient(socketPath: string) {
   const decoder = new NdjsonDecoder();
   const pendingById = new Map<
     number,
-    { resolve: (m: Record<string, unknown>) => void; reject: (e: Error) => void }
+    {
+      resolve: (m: Record<string, unknown>) => void;
+      reject: (e: Error) => void;
+    }
   >();
   sock.on("data", (chunk) => {
     for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
@@ -341,7 +343,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
 
     const upstreamPort = await getFreeTcpPort();
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let failedOnce = false;
     net.Socket.prototype.write = function (
       this: net.Socket,
@@ -353,13 +357,14 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !failedOnce &&
-        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstreamPort ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_store")
       ) {
         failedOnce = true;
-        const callback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        const callback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         if (callback)
           setImmediate(() => {
             callback(new Error("write failed"));
@@ -371,7 +376,8 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -389,11 +395,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     const request = client.request("brain_store", 2);
 
     const upstream = await startFakeBrainbarTcp("A", upstreamPort);
-    cleanups.push(
-      () => {
-        upstream.server.close();
-      },
-    );
+    cleanups.push(() => {
+      upstream.server.close();
+    });
 
     const res = await request;
     expect(res.id).toBe(2);
@@ -414,7 +418,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       upstream.server.close();
     });
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let failedOnce = false;
     net.Socket.prototype.write = function (
       this: net.Socket,
@@ -426,13 +432,14 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !failedOnce &&
-        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstream.port ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_search")
       ) {
         failedOnce = true;
-        const callback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        const callback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         if (callback)
           setImmediate(() => {
             callback(new Error("write failed"));
@@ -444,7 +451,8 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -478,7 +486,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       upstream.server.close();
     });
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let backpressuredOnce = false;
     net.Socket.prototype.write = function (
       this: net.Socket,
@@ -490,7 +500,8 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !backpressuredOnce &&
-        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstream.port ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_search")
       ) {
         backpressuredOnce = true;
@@ -500,7 +511,8 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -597,7 +609,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       connections++;
       const decoder = new NdjsonDecoder();
       sock.on("data", (chunk) => {
-        for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        for (const msg of decoder.push(chunk) as Array<
+          Record<string, unknown>
+        >) {
           if (msg.method === undefined) continue;
           receivedIds.push(Number(msg.id));
           sock.write(
@@ -614,7 +628,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       upstream.close();
     });
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let heldCallback: ((err?: Error) => void) | undefined;
     let heldSocket: net.Socket | undefined;
     let heldOnce = false;
@@ -626,15 +642,16 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       if (!heldOnce && this.remotePort === upstreamPort) {
         heldOnce = true;
         heldSocket = this;
-        heldCallback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        heldCallback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -703,14 +720,18 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     upstream.server.on("connection", (sock) => {
       const decoder = new NdjsonDecoder();
       sock.on("data", (chunk) => {
-        for (const msg of decoder.push(chunk) as Array<Record<string, unknown>>) {
+        for (const msg of decoder.push(chunk) as Array<
+          Record<string, unknown>
+        >) {
           if (msg.method === undefined) continue;
           receivedIds.push(Number(msg.id));
         }
       });
     });
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let staleCallback: ((err?: Error) => void) | undefined;
     let activeWrite:
       | { socket: net.Socket; chunk: string | Uint8Array; args: any[] }
@@ -727,15 +748,12 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       const text = Buffer.isBuffer(chunk)
         ? chunk.toString("utf8")
         : String(chunk);
-      if (
-        this.remotePort === upstream.port &&
-        text.includes('"id":501')
-      ) {
+      if (this.remotePort === upstream.port && text.includes('"id":501')) {
         if (!heldStale) {
           heldStale = true;
-          staleCallback = args.find(
-            (arg) => typeof arg === "function",
-          ) as ((err?: Error) => void) | undefined;
+          staleCallback = args.find((arg) => typeof arg === "function") as
+            | ((err?: Error) => void)
+            | undefined;
           this.destroy();
           return true;
         }
@@ -750,7 +768,8 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -778,7 +797,11 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     expect(overlappingActiveWrites).toBe(0);
 
     if (!activeWrite) throw new Error("active write was not held");
-    originalWrite.call(activeWrite.socket, activeWrite.chunk, ...activeWrite.args);
+    originalWrite.call(
+      activeWrite.socket,
+      activeWrite.chunk,
+      ...activeWrite.args,
+    );
     activeFlushInFlight = false;
 
     const [r1, r2] = await Promise.all([first, second]);
@@ -794,7 +817,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
 
     const upstreamPort = await getFreeTcpPort();
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let heldCallback: ((err?: Error) => void) | undefined;
     let heldOnce = false;
     net.Socket.prototype.write = function (
@@ -807,20 +832,22 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !heldOnce &&
-        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstreamPort ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_store")
       ) {
         heldOnce = true;
-        heldCallback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        heldCallback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         this.destroy();
         return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -861,7 +888,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
 
     const upstreamPort = await getFreeTcpPort();
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let failedOnce = false;
     net.Socket.prototype.write = function (
       this: net.Socket,
@@ -873,20 +902,22 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !failedOnce &&
-        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstreamPort ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes("brain_recall")
       ) {
         failedOnce = true;
-        const callback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        const callback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         if (callback) setImmediate(() => callback(new Error("flush failed")));
         return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -921,7 +952,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
 
     const upstreamPort = await getFreeTcpPort();
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let heldCallback: ((err?: Error) => void) | undefined;
     let heldOnce = false;
     net.Socket.prototype.write = function (
@@ -934,20 +967,22 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !heldOnce &&
-        (this.remotePort === upstreamPort || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstreamPort ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes('"id":201')
       ) {
         heldOnce = true;
-        heldCallback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        heldCallback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         this.destroy();
         return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -981,8 +1016,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
     await sleep(80);
 
     expect(responses.map((r) => r.id)).toEqual([201, 202, 203]);
-    expect(responses.map((r) => (r.result as { instance?: string }).instance))
-      .toEqual(["A", "A", "A"]);
+    expect(
+      responses.map((r) => (r.result as { instance?: string }).instance),
+    ).toEqual(["A", "A", "A"]);
     expect(heldOnce).toBe(true);
     expect(upstream.connections()).toBe(2);
 
@@ -1002,7 +1038,9 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
       upstream.server.close();
     });
 
-    const originalWrite = net.Socket.prototype.write as (...a: any[]) => boolean;
+    const originalWrite = net.Socket.prototype.write as (
+      ...a: any[]
+    ) => boolean;
     let heldCallback: ((err?: Error) => void) | undefined;
     let heldOnce = false;
     net.Socket.prototype.write = function (
@@ -1015,20 +1053,22 @@ describe("BrainlayerProxy — P0.3 reconnect-survival (the headline)", () => {
         : String(chunk);
       if (
         !heldOnce &&
-        (this.remotePort === upstream.port || this.remoteAddress === "127.0.0.1") &&
+        (this.remotePort === upstream.port ||
+          this.remoteAddress === "127.0.0.1") &&
         text.includes('"id":302')
       ) {
         heldOnce = true;
-        heldCallback = args.find(
-          (arg) => typeof arg === "function",
-        ) as ((err?: Error) => void) | undefined;
+        heldCallback = args.find((arg) => typeof arg === "function") as
+          | ((err?: Error) => void)
+          | undefined;
         this.destroy();
         return true;
       }
       return originalWrite.call(this, chunk, ...args);
     } as typeof net.Socket.prototype.write;
     cleanups.push(() => {
-      net.Socket.prototype.write = originalWrite as typeof net.Socket.prototype.write;
+      net.Socket.prototype.write =
+        originalWrite as typeof net.Socket.prototype.write;
     });
 
     const proxy = new BrainlayerProxy({
@@ -1094,7 +1134,9 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
     expect(source).toContain("const myGen = ++generation");
     expect(source).toContain("const isCurrent = () => generation === myGen");
     expect(source).toContain("connectTimeoutMs?: number");
-    expect(source).toContain("this.#connectTimeoutMs = opts.connectTimeoutMs ?? 5000");
+    expect(source).toContain(
+      "this.#connectTimeoutMs = opts.connectTimeoutMs ?? 5000",
+    );
     expect(source).toContain(
       "const isCurrent = () => generation === writeGeneration",
     );
@@ -1157,9 +1199,14 @@ describe("BrainlayerProxy stale-socket guard placement", () => {
     }
 
     expect(source).not.toContain("writeToReadyUpstream");
-    expect(source.match(/\.write\(/g)?.length).toBe(2);
-    expect(source).toContain("client.write(chunk)");
+    // Three write call-sites total, but still exactly ONE ordered UPSTREAM write
+    // (target.write). The other two are client-facing: the filtered transparent
+    // relay (client.write(relayChunk)) and the P1b synthesized LOUD timeout error.
+    expect(source.match(/\.write\(/g)?.length).toBe(3);
+    expect(source.match(/target\.write\(/g)?.length).toBe(1);
+    expect(source).toContain("client.write(relayChunk)");
     expect(source).toContain("target.write(buf, (err) => {");
+    expect(source).toContain("request timed out after ${requestTimeoutMs}ms");
 
     const clientDataHandler = source.slice(
       source.indexOf('client.on("data"'),

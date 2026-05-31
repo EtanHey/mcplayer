@@ -40,6 +40,8 @@ describe("BrainLayer proxy daemon CLI config", () => {
     expect(brainlayerProxyConfigFromEnv({})).toEqual({
       frontSocketPath: "/tmp/mcplayer-brainlayer.sock",
       upstream: { kind: "unix", path: "/tmp/brainbar.sock" },
+      requestTimeoutMs: 15000,
+      degradedMs: 5000,
     });
     expect(
       brainlayerProxyConfigFromEnv({
@@ -49,6 +51,30 @@ describe("BrainLayer proxy daemon CLI config", () => {
     ).toEqual({
       frontSocketPath: "/tmp/test-front.sock",
       upstream: { kind: "tcp", host: "localhost", port: 5555 },
+      requestTimeoutMs: 15000,
+      degradedMs: 5000,
+    });
+  });
+
+  test("wires P1b timeout env vars into daemon config with default fallbacks", () => {
+    expect(
+      brainlayerProxyConfigFromEnv({
+        MCPLAYER_BRAINLAYER_REQUEST_TIMEOUT_MS: "3210",
+        MCPLAYER_BRAINLAYER_DEGRADED_MS: "432",
+      }),
+    ).toMatchObject({
+      requestTimeoutMs: 3210,
+      degradedMs: 432,
+    });
+
+    expect(
+      brainlayerProxyConfigFromEnv({
+        MCPLAYER_BRAINLAYER_REQUEST_TIMEOUT_MS: "not-a-number",
+        MCPLAYER_BRAINLAYER_DEGRADED_MS: "0",
+      }),
+    ).toMatchObject({
+      requestTimeoutMs: 15000,
+      degradedMs: 5000,
     });
   });
 

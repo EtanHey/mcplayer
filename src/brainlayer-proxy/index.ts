@@ -16,6 +16,7 @@
 
 import net from "node:net";
 import { rmSync } from "node:fs";
+import { classify, encodeLine, NdjsonDecoder } from "../protocol";
 
 export type UpstreamTarget =
   | { kind: "unix"; path: string }
@@ -30,6 +31,21 @@ export interface BrainlayerProxyOptions {
   maxReconnectDelayMs?: number;
   /** Upstream connect deadline (ms). Default 5000. */
   connectTimeoutMs?: number;
+  /**
+   * Per-request hang deadline (ms). If a front request id gets no upstream
+   * response within this window, the proxy synthesizes a LOUD JSON-RPC error
+   * carrying that id so the agent fails fast + visibly instead of hanging — the
+   * connection stays open (NOT a socat -T inactivity kill). Default 15000.
+   */
+  requestTimeoutMs?: number;
+  /**
+   * Degraded deadline (ms). If a request is pending while the upstream is
+   * unreachable for this long, the proxy answers that id with a LOUD "degraded —
+   * upstream unreachable, retrying" JSON-RPC error (the connection stays open and
+   * the upstream keeps reconnecting, so a later request auto-recovers). Default
+   * 5000. Should be < requestTimeoutMs so a down upstream is reported faster than
+   * a slow one. */
+  degradedMs?: number;
 }
 
 export function connectUpstream(target: UpstreamTarget): net.Socket {
@@ -41,11 +57,11 @@ export function connectUpstream(target: UpstreamTarget): net.Socket {
 function socketCanWrite(sock: net.Socket | undefined): sock is net.Socket {
   return Boolean(
     sock &&
-      sock.writable &&
-      !sock.destroyed &&
-      !sock.readableEnded &&
-      !sock.writableEnded &&
-      !sock.writableNeedDrain,
+    sock.writable &&
+    !sock.destroyed &&
+    !sock.readableEnded &&
+    !sock.writableEnded &&
+    !sock.writableNeedDrain,
   );
 }
 
@@ -55,6 +71,8 @@ export class BrainlayerProxy {
   readonly #reconnectDelayMs: number;
   readonly #maxReconnectDelayMs: number;
   readonly #connectTimeoutMs: number;
+  readonly #requestTimeoutMs: number;
+  readonly #degradedMs: number;
   #server?: net.Server;
   #closed = false;
   readonly #sockets = new Set<net.Socket>();
@@ -65,6 +83,8 @@ export class BrainlayerProxy {
     this.#reconnectDelayMs = opts.reconnectDelayMs ?? 250;
     this.#maxReconnectDelayMs = opts.maxReconnectDelayMs ?? 2000;
     this.#connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
+    this.#requestTimeoutMs = opts.requestTimeoutMs ?? 15000;
+    this.#degradedMs = opts.degradedMs ?? 5000;
   }
 
   get frontSocketPath(): string {
@@ -98,6 +118,131 @@ export class BrainlayerProxy {
     let flushingPending = false;
     let generation = 0;
 
+    // Frame-aware LOUD degradation. The front decoder spots each request id and
+    // arms two deadlines; the upstream relay parses complete NDJSON frames so it
+    // can settle matching responses and suppress a late real response after the
+    // id was already answered by a synthesized LOUD error. Whichever fires first
+    // answers that id with a LOUD JSON-RPC error (never a silent hang, never a
+    // fake-empty result), and the connection stays open:
+    //   • DEGRADED  — upstream still unreachable after degradedMs (BrainBar down)
+    //   • TIMED OUT — upstream up but no response within requestTimeoutMs (slow query)
+    const frontDecoder = new NdjsonDecoder();
+    let upstreamFrameBuffer = Buffer.alloc(0);
+    const answered = new Set<string>();
+    const requestTimeoutMs = this.#requestTimeoutMs;
+    const degradedMs = this.#degradedMs;
+    const upstreamLabel =
+      this.#upstream.kind === "unix"
+        ? this.#upstream.path
+        : `${this.#upstream.host}:${this.#upstream.port}`;
+    const idKey = (id: unknown) => JSON.stringify(id);
+
+    interface RequestDeadlines {
+      hang?: ReturnType<typeof setTimeout>;
+      degraded?: ReturnType<typeof setTimeout>;
+    }
+    const pendingRequests = new Map<string, RequestDeadlines>();
+
+    const clearDeadlines = (key: string) => {
+      const d = pendingRequests.get(key);
+      if (!d) return;
+      if (d.hang) clearTimeout(d.hang);
+      if (d.degraded) clearTimeout(d.degraded);
+      pendingRequests.delete(key);
+    };
+
+    // Answer a request id exactly once with a LOUD error, then never again
+    // (settles the late real response too — see filterUpstreamChunk).
+    const answerOnce = (
+      key: string,
+      id: unknown,
+      code: number,
+      message: string,
+    ) => {
+      if (answered.has(key)) return;
+      answered.add(key);
+      clearDeadlines(key);
+      console.error(`BRAINLAYER_PROXY_LOUD id=${key} code=${code} ${message}`);
+      if (!clientClosed)
+        client.write(
+          encodeLine({ jsonrpc: "2.0", id, error: { code, message } }),
+        );
+    };
+
+    const settleRequest = (key: string) => {
+      answered.add(key);
+      clearDeadlines(key);
+    };
+
+    const trackClientFrames = (chunk: Buffer) => {
+      for (const msg of frontDecoder.push(chunk)) {
+        if (classify(msg) !== "request") continue;
+        const id = (msg as { id: unknown }).id;
+        const key = idKey(id);
+        if (pendingRequests.has(key) || answered.has(key)) continue;
+        const deadlines: RequestDeadlines = {
+          hang: setTimeout(
+            () =>
+              answerOnce(
+                key,
+                id,
+                -32000,
+                `BrainLayer slow/unresponsive — request timed out after ${requestTimeoutMs}ms`,
+              ),
+            requestTimeoutMs,
+          ),
+          degraded: setTimeout(() => {
+            // Only LOUD-degrade if the upstream is still unreachable; if it is up
+            // the request is genuinely in flight and the hang timer covers it.
+            if (upstreamReady) return;
+            answerOnce(
+              key,
+              id,
+              -32010,
+              `BrainLayer degraded — upstream ${upstreamLabel} unreachable, retrying`,
+            );
+          }, degradedMs),
+        };
+        pendingRequests.set(key, deadlines);
+      }
+    };
+
+    const filterUpstreamChunk = (chunk: Buffer): Buffer | undefined => {
+      upstreamFrameBuffer =
+        upstreamFrameBuffer.length === 0
+          ? Buffer.from(chunk)
+          : Buffer.concat([upstreamFrameBuffer, chunk]);
+
+      const relayFrames: Buffer[] = [];
+      let nl: number;
+      while ((nl = upstreamFrameBuffer.indexOf(0x0a)) !== -1) {
+        const line = upstreamFrameBuffer.subarray(0, nl);
+        const frame = Buffer.concat([line, Buffer.from("\n")]);
+        upstreamFrameBuffer = upstreamFrameBuffer.subarray(nl + 1);
+        const text = line.toString("utf8").trim();
+        if (!text) {
+          relayFrames.push(frame);
+          continue;
+        }
+
+        let msg: unknown;
+        try {
+          msg = JSON.parse(text);
+        } catch {
+          relayFrames.push(frame);
+          continue;
+        }
+
+        if (classify(msg) === "response") {
+          const key = idKey((msg as { id: unknown }).id);
+          if (answered.has(key)) continue;
+          settleRequest(key);
+        }
+        relayFrames.push(frame);
+      }
+      return relayFrames.length > 0 ? Buffer.concat(relayFrames) : undefined;
+    };
+
     const handleWriteFailure = (target: net.Socket) => {
       upstreamReady = false;
       target.destroy();
@@ -105,7 +250,8 @@ export class BrainlayerProxy {
     };
 
     const flushPending = () => {
-      if (flushingPending || !upstreamReady || !socketCanWrite(upstream)) return;
+      if (flushingPending || !upstreamReady || !socketCanWrite(upstream))
+        return;
       const target = upstream;
       const writeGeneration = generation;
       const isCurrent = () => generation === writeGeneration;
@@ -140,6 +286,7 @@ export class BrainlayerProxy {
       const myGen = ++generation;
       const isCurrent = () => generation === myGen;
       const u = connectUpstream(this.#upstream);
+      upstreamFrameBuffer = Buffer.alloc(0);
       upstream = u;
       upstreamReady = false;
       this.#sockets.add(u);
@@ -181,7 +328,8 @@ export class BrainlayerProxy {
       });
       u.on("data", (chunk: Buffer) => {
         if (!isCurrent()) return;
-        if (!clientClosed) client.write(chunk);
+        const relayChunk = filterUpstreamChunk(chunk);
+        if (relayChunk && !clientClosed) client.write(relayChunk);
       });
       u.on("drain", () => {
         if (!isCurrent()) return;
@@ -199,12 +347,14 @@ export class BrainlayerProxy {
       // Buffer until an upstream is connected (initial connect OR a reconnect),
       // then flush in order — a request sent while BrainBar is down still lands.
       bufferForReconnect(chunk);
+      trackClientFrames(chunk);
     });
 
     const teardownClient = () => {
       if (clientClosed) return;
       clientClosed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      for (const key of [...pendingRequests.keys()]) clearDeadlines(key);
       this.#sockets.delete(client);
       client.destroy();
       if (upstream) {
