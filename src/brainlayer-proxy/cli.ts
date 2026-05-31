@@ -2,6 +2,9 @@
 
 import { BrainlayerProxy, type BrainlayerProxyOptions, type UpstreamTarget } from ".";
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const DEFAULT_DEGRADED_MS = 5000;
+
 export function parseUpstreamTarget(value: string): UpstreamTarget {
   if (!value)
     throw new Error(
@@ -41,6 +44,11 @@ export function formatUpstreamTarget(target: UpstreamTarget): string {
     : `tcp:${target.host}:${target.port}`;
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function brainlayerProxyConfigFromEnv(
   env: Record<string, string | undefined>,
 ): BrainlayerProxyOptions {
@@ -49,6 +57,14 @@ export function brainlayerProxyConfigFromEnv(
       env.MCPLAYER_BRAINLAYER_FRONT ?? "/tmp/mcplayer-brainlayer.sock",
     upstream: parseUpstreamTarget(
       env.MCPLAYER_BRAINLAYER_UPSTREAM ?? "unix:/tmp/brainbar.sock",
+    ),
+    requestTimeoutMs: parsePositiveInt(
+      env.MCPLAYER_BRAINLAYER_REQUEST_TIMEOUT_MS,
+      DEFAULT_REQUEST_TIMEOUT_MS,
+    ),
+    degradedMs: parsePositiveInt(
+      env.MCPLAYER_BRAINLAYER_DEGRADED_MS,
+      DEFAULT_DEGRADED_MS,
     ),
   };
 }
