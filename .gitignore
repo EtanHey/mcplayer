@@ -6,3 +6,6 @@ docs.local/
 .env.local
 claude.scratchpad.md
 bin/.mcplayer.log
+.worktrees/
+.claude/worktrees/
+.cmux/worktrees/
